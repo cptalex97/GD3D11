@@ -1038,6 +1038,7 @@ void D3D11GraphicsEngine::OnResetBackBuffer() {
 
 /** Get BackBuffer Format */
 DXGI_FORMAT D3D11GraphicsEngine::GetBackBufferFormat() {
+    // Both options are linear float targets for PBR; compression picks lower-bandwidth R11G11B10F.
     return Engine::GAPI->GetRendererState().RendererSettings.CompressBackBuffer ? DXGI_FORMAT_R11G11B10_FLOAT : DXGI_FORMAT_R16G16B16A16_FLOAT;
 }
 
@@ -4421,18 +4422,15 @@ XRESULT D3D11GraphicsEngine::OnStartWorldRendering() {
         } );
     }
 
-    if ( rendererState.RendererSettings.EnableHDR ) {       
-        graph.AddPass( RG_PASS_NAME("Render HDR"), [&]( RGBuilder& builder, RenderPass& pass ) {
-            builder.Read( backBufferHandle );
-            builder.Write( backBufferHandle );
+    graph.AddPass( RG_PASS_NAME("Render Tonemap"), [&]( RGBuilder& builder, RenderPass& pass ) {
+        builder.Read( backBufferHandle );
+        builder.Write( backBufferHandle );
 
-            pass.m_executeCallback = [this, backBufferHandle](const RenderGraph& graph) {
-                TracyD3D11ZoneCGX( "D3D11GraphicsEngine::Render HDR" );
-                auto backbufferTex = graph.GetPhysicalTexture( backBufferHandle );
-                PfxRenderer->RenderHDR( backbufferTex->GetRenderTargetView().Get(), backbufferTex->GetShaderResView().Get() );
-            };
-        } );
-    }
+        pass.m_executeCallback = [this, backBufferHandle](const RenderGraph& graph) {
+            auto backbufferTex = graph.GetPhysicalTexture( backBufferHandle );
+            PfxRenderer->RenderHDR( backbufferTex->GetRenderTargetView().Get(), backbufferTex->GetShaderResView().Get() );
+        };
+    } );
 
     if ( rendererState.RendererSettings.AntiAliasingMode
         == GothicRendererSettings::AA_SMAA ) {       

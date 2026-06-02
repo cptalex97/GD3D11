@@ -69,6 +69,9 @@ ImGuiEditorView::ImGuiEditorView() {
     SelectedTexNrmStr = 1.0f;
     SelectedTexSpecIntens = 1.0f;
     SelectedTexSpecPower = 90.0f;
+    SelectedTexAOMultiplier = 1.0f;
+    SelectedTexRoughnessMultiplier = 1.0f;
+    SelectedTexMetallicMultiplier = 1.0f;
     SelectedTexDisplacement = 1.0f;
     SelectedMeshTessAmount = 0.0f;
     SelectedMeshRoundness = 1.0f;
@@ -254,37 +257,56 @@ void ImGuiEditorView::RenderTextureSelectionPanel() {
     ImGui::Separator();
 
     // Texture properties
+    bool updateMaterial = false;
     ImGui::Text("Normalmap:");
     ImGui::SameLine(80);
     if (ImGui::SliderFloat("##NrmStr", &SelectedTexNrmStr, -2.0f, 2.0f, "%.2f")) {
+        updateMaterial = true;
+    }
+
+    ImGui::Text("Spec intens (Legacy):");
+    ImGui::SameLine(80);
+    if (ImGui::SliderFloat("##SpecIntens", &SelectedTexSpecIntens, 0.0f, 5.0f, "%.2f")) {
+        updateMaterial = true;
+    }
+
+    ImGui::Text("Spec power (Legacy):");
+    ImGui::SameLine(80);
+    if (ImGui::SliderFloat("##SpecPower", &SelectedTexSpecPower, 0.1f, 200.0f, "%.1f")) {
+        updateMaterial = true;
+    }
+
+    ImGui::Separator();
+    ImGui::Text("PBR multipliers:");
+
+    ImGui::Text("AO:");
+    ImGui::SameLine(80);
+    if (ImGui::SliderFloat("##AOMult", &SelectedTexAOMultiplier, 0.0f, 2.0f, "%.2f")) {
+        updateMaterial = true;
+    }
+
+    ImGui::Text("Roughness:");
+    ImGui::SameLine(80);
+    if (ImGui::SliderFloat("##RoughMult", &SelectedTexRoughnessMultiplier, 0.0f, 2.0f, "%.2f")) {
+        updateMaterial = true;
+    }
+
+    ImGui::Text("Metallic:");
+    ImGui::SameLine(80);
+    if (ImGui::SliderFloat("##MetalMult", &SelectedTexMetallicMultiplier, 0.0f, 2.0f, "%.2f")) {
+        updateMaterial = true;
+    }
+
+    if (updateMaterial) {
         if (Selection.SelectedMaterial && Selection.SelectedMaterial->GetTexture()) {
             MaterialInfo* info = Engine::GAPI->GetMaterialInfoFrom(Selection.SelectedMaterial->GetTexture());
             if (info) {
                 info->buffer.NormalmapStrength = SelectedTexNrmStr;
-                info->WriteToFile(Selection.SelectedMaterial->GetTexture()->GetNameWithoutExt());
-            }
-        }
-    }
-
-    ImGui::Text("Spec intens:");
-    ImGui::SameLine(80);
-    if (ImGui::SliderFloat("##SpecIntens", &SelectedTexSpecIntens, 0.0f, 5.0f, "%.2f")) {
-        if (Selection.SelectedMaterial && Selection.SelectedMaterial->GetTexture()) {
-            MaterialInfo* info = Engine::GAPI->GetMaterialInfoFrom(Selection.SelectedMaterial->GetTexture());
-            if (info) {
                 info->buffer.SpecularIntensity = SelectedTexSpecIntens;
-                info->WriteToFile(Selection.SelectedMaterial->GetTexture()->GetNameWithoutExt());
-            }
-        }
-    }
-
-    ImGui::Text("Spec power:");
-    ImGui::SameLine(80);
-    if (ImGui::SliderFloat("##SpecPower", &SelectedTexSpecPower, 0.1f, 200.0f, "%.1f")) {
-        if (Selection.SelectedMaterial && Selection.SelectedMaterial->GetTexture()) {
-            MaterialInfo* info = Engine::GAPI->GetMaterialInfoFrom(Selection.SelectedMaterial->GetTexture());
-            if (info) {
                 info->buffer.SpecularPower = SelectedTexSpecPower;
+                info->buffer.AOMultiplier = SelectedTexAOMultiplier;
+                info->buffer.RoughnessMultiplier = SelectedTexRoughnessMultiplier;
+                info->buffer.MetallicMultiplier = SelectedTexMetallicMultiplier;
                 info->WriteToFile(Selection.SelectedMaterial->GetTexture()->GetNameWithoutExt());
             }
         }
@@ -782,6 +804,9 @@ void ImGuiEditorView::UpdateSelectionPanel() {
             SelectedTexNrmStr = info->buffer.NormalmapStrength;
             SelectedTexSpecIntens = info->buffer.SpecularIntensity;
             SelectedTexSpecPower = info->buffer.SpecularPower;
+            SelectedTexAOMultiplier = info->buffer.AOMultiplier;
+            SelectedTexRoughnessMultiplier = info->buffer.RoughnessMultiplier;
+            SelectedTexMetallicMultiplier = info->buffer.MetallicMultiplier;
         }
     }
 

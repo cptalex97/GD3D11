@@ -233,6 +233,9 @@ protected:
     float SelectedTexNrmStr;
     float SelectedTexSpecIntens;
     float SelectedTexSpecPower;
+    float SelectedTexAOMultiplier;
+    float SelectedTexRoughnessMultiplier;
+    float SelectedTexMetallicMultiplier;
     float SelectedTexDisplacement;
     float SelectedMeshTessAmount;
     float SelectedMeshRoundness;

@@ -7228,6 +7228,8 @@ XRESULT D3D11GraphicsEngine::DrawVOBsInstanced() {
             ID3D11ShaderResourceView* lastFxTex = nullptr;
             MeshVisualInfo* lastWindVisual = nullptr;
 
+            const bool isRaining = Engine::GAPI->GetSceneWetness() > 1e-6;
+
             if ( !cache.sortedInstancedMeshes.empty() ) {
                 TracyD3D11ZoneCGX( "DrawVOBsInstanced::OpaqueSubmission" );
                 auto _scopeOpaqueSubmission = RecordGraphicsEvent( GE_NAME( "DrawVOBsInstanced::OpaqueSubmission" ) );
@@ -7336,7 +7338,7 @@ XRESULT D3D11GraphicsEngine::DrawVOBsInstanced() {
 
                         MyDirectDrawSurface7* surface = tx->GetSurface();
                         ID3D11ShaderResourceView* srv[3];
-                        MaterialInfo* info = meshKey.Info;
+                        MaterialInfo* info = Engine::GAPI->GetMaterialInfoFrom( tx );
 
                         // Get diffuse and normalmap
                         srv[0] = surface->GetEngineTexture()->GetShaderResourceView().Get();
@@ -7349,7 +7351,9 @@ XRESULT D3D11GraphicsEngine::DrawVOBsInstanced() {
 
                         // Bind a default normalmap in case the scene is wet and we
                         // currently have none
-                        if ( !srv[1] && (wantShader && !isZPrepass) ) {
+                        if ( !srv[1] 
+                            && (wantShader && !isZPrepass)
+                            && isRaining ) {
                             // Modify the strength of that default normalmap for the
                             // material info
                             if ( info && info->buffer.NormalmapStrength

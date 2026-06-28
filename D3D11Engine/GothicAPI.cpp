@@ -4854,10 +4854,12 @@ void GothicAPI::ResetMaterialInfo() {
 }
 
 static void FixUpMaterial( MaterialInfo::Buffer& buffer ) {
-    if ( buffer.SpecularIntensity < 0.0f ) {
-        // we abuse negative specular intensity to mark a pixel as "focused", thus materials must never have negative specular intensity.
-        buffer.SpecularIntensity = 0.0f;
-    }
+    // we abuse negative specular intensity to mark a pixel as "focused", thus materials must never have negative specular intensity.
+    buffer.SpecularIntensity = std::max(buffer.SpecularIntensity, 0.0f);
+
+    buffer.AOMultiplier = std::clamp( buffer.AOMultiplier, 0.0f, 1.0f ); 
+    buffer.RoughnessMultiplier = std::clamp( buffer.RoughnessMultiplier, 0.0f, 1.0f );
+    buffer.MetallicMultiplier = std::clamp( buffer.MetallicMultiplier, 0.0f, 1.0f );
 }
 
 /** Returns the material info associated with the given material */
@@ -4876,11 +4878,10 @@ MaterialInfo* GothicAPI::GetMaterialInfoFrom( zCTexture* tex ) {
                 mi->MaterialType = MaterialInfo::MT_FullAlpha;
             }
         }
+        FixUpMaterial( mi->buffer );
     } else {
         mi = it->second.get();
     }
-
-    FixUpMaterial( mi->buffer );
 
     return mi;
 }
@@ -4898,11 +4899,11 @@ MaterialInfo* GothicAPI::GetMaterialInfoFrom( zCTexture* tex, const std::string_
                     mi->MaterialType = MaterialInfo::MT_FullAlpha;
                 }
             }
+            FixUpMaterial( mi->buffer );
         } else {
             mi = it->second.get();
         }
 
-        FixUpMaterial( mi->buffer );
 
         return mi;
 }

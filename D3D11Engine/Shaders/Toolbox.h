@@ -39,5 +39,5 @@ float3 perturb_normal( float3 N, float3 V, Texture2D normalmap, float2 texcoord,
 	nrmmap = normalize(nrmmap);
 	
     float3x3 TBN = cotangent_frame( N, -V, texcoord );
-    return normalize( mul(transpose(TBN), nrmmap) );
+    return normalize( mul(nrmmap, TBN) );
 }

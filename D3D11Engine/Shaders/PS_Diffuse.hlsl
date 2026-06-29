@@ -109,12 +109,9 @@ FORWARD_PLUS_PS_OUTPUT PSMain( PS_INPUT Input )
 #if FXMAP == 1
 	orm = saturate( TX_Texture2.Sample(SS_Linear, Input.vTexcoord).rgb );
 #else
-	orm = float3( 1.0f, 0.6f, 0.0f );
+	orm = float3( MI_AOMultiplier, MI_RoughnessMultiplier, MI_MetallicMultiplier );
 #endif
 
-	float ao = saturate( orm.r * MI_AOMultiplier );
-	float roughness = max( saturate( orm.g * MI_RoughnessMultiplier ), 0.045f );
-	float metallic = saturate( orm.b * MI_MetallicMultiplier );
 	float3 baseColor = color.rgb;
 	float vertLighting = Input.vDiffuse.y;
 
@@ -160,7 +157,7 @@ FORWARD_PLUS_PS_OUTPUT PSMain( PS_INPUT Input )
 #endif
 
 	// Sun lighting
-	float3 litPixel = FP_ComputeSunLighting(wsPosition, vsPosition, nrm, baseColor, roughness, metallic, ao, shadow, vertLighting);
+	float3 litPixel = FP_ComputeSunLighting(wsPosition, vsPosition, nrm, baseColor, orm.g, orm.b, orm.r, shadow, vertLighting);
 	
 	// Atmospheric scattering
 	litPixel = ApplyAtmosphericScatteringGround(wsPosition, litPixel);
@@ -168,7 +165,7 @@ FORWARD_PLUS_PS_OUTPUT PSMain( PS_INPUT Input )
 	// Point lights, only when close enough
 	if (pixelDistZ < 6000.0f) 
 	{
-		litPixel += FP_ComputePointLighting(wsPosition, vsPosition, nrm, baseColor, roughness, metallic, Input.vPosition.xy);
+		litPixel += FP_ComputePointLighting(wsPosition, vsPosition, nrm, baseColor, orm.g, orm.b, Input.vPosition.xy);
 	}
 
 	float focusBrightness = 1.0f + step(1.5f, Input.vDiffuse.w) * 1.0f;
@@ -235,7 +232,7 @@ DEFERRED_PS_OUTPUT PSMain( PS_INPUT Input ) : SV_TARGET
 	output.vNrm = EncodeNormalGBuffer(nrm);
 
 	bool focused = Input.vDiffuse.w > 1.5f;
-	output.vSI_SP = float4(max(orm.r, 0.045f), orm.g, orm.b, focused ? 1.0f : 0.0f);
+	output.vSI_SP = float4(orm.r, orm.g, orm.b, focused ? 1.0f : 0.0f);
 	
 	// Calculate velocity for motion vectors
 	// For instanced objects (VOBs, skeletal meshes), vCurrClipPos/vPrevClipPos come from VS

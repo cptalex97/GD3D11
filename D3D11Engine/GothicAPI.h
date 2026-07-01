@@ -209,36 +209,7 @@ struct MaterialInfo {
     /** Loads this info from a file */
     void LoadFromFile( const std::string_view name );
 
-    struct BufferV1 {
-        float SpecularIntensity;
-        float SpecularPower;
-        float NormalmapStrength;
-        float DisplacementFactor;
-        float4 Color;
-
-        void SetDefaults() {
-            SpecularIntensity = 0.1f;
-            SpecularPower = 60.0f;
-            NormalmapStrength = 1.0f;
-            DisplacementFactor = 1.0f;
-            Color = 0xFFFFFFFF;
-            
-            AOMultiplier = 1.0f;
-	        RoughnessMultiplier = 1.0f;
-	        MetallicMultiplier = 0.0f;
-	        PBRPadding = 0.0f;
-        }
-
-        bool operator==( const Buffer& other ) const noexcept {
-            return SpecularIntensity == other.SpecularIntensity &&
-                SpecularPower == other.SpecularPower &&
-                NormalmapStrength == other.NormalmapStrength &&
-                DisplacementFactor == other.DisplacementFactor &&
-                Color == other.Color;
-        }
-    };
-
-    struct BufferVNext {
+    struct Buffer {
         float SpecularIntensity;
         float SpecularPower;
         float NormalmapStrength;
@@ -249,6 +220,19 @@ struct MaterialInfo {
         float RoughnessMultiplier;
         float MetallicMultiplier;
         float PBRPadding;
+        
+        void SetDefaults() {
+            SpecularIntensity = 0.1f;
+            SpecularPower = 60.0f;
+            NormalmapStrength = 1.0f;
+            DisplacementFactor = 1.0f;
+            Color = 0xFFFFFFFF;
+            
+            AOMultiplier = 1.0f;
+            RoughnessMultiplier = 1.0f;
+            MetallicMultiplier = 0.0f;
+            PBRPadding = 0.0f;
+        }
 
         bool operator==( const Buffer& other ) const noexcept {
             return SpecularIntensity == other.SpecularIntensity &&

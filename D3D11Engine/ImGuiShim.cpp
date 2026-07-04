@@ -130,6 +130,16 @@ void ImGuiShim::RenderLoop()
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
 
+    // GOUC: server policy - fog & rain are always ON and cannot be disabled (anti-cheat).
+    // Forced every frame before the settings snapshot below, so it overrides both the INI
+    // (EnableFog/Rain/RainEffects) and any in-menu toggling.
+    {
+        auto& goucForced = Engine::GAPI->GetRendererState().RendererSettings;
+        goucForced.DrawFog = true;
+        goucForced.EnableRain = true;
+        goucForced.EnableRainEffects = true;
+    }
+
     ImGui::GetIO().MouseDrawCursor = GetIsActive() && INT2( ImGui::GetMainViewport()->Size.x, ImGui::GetMainViewport()->Size.y ) != Engine::GraphicsEngine->GetResolution();
 
     static zSTRING GDX_IMGUI_BEGINFRAME = "GDX_IMGUI_BEGINFRAME";
@@ -563,8 +573,10 @@ void ImGuiShim::RenderSettingsWindow()
             ImGui::SetItemTooltip( "Grass and wheats may move when the player runs through it." );
 #endif //BUILD_GOTHIC_2_6_fix
 
+            ImGui::BeginDisabled( true ); // GOUC: forced ON, not user-changeable
             ImGui::Checkbox( "Enable Rain", &settings.EnableRain );
             ImGui::Checkbox( "Enable Rain Effects", &settings.EnableRainEffects );
+            ImGui::EndDisabled();
             if ( ImGui::Checkbox( "Enable Water waves", &settings.EnableWaterAnimation ) ) {
                 shadersToReload |= ShaderCategory::Water;
             }
@@ -976,9 +988,11 @@ void ImGuiShim::RenderAdvancedColumn2( GothicRendererSettings& settings, GothicA
         ImGui::EndDisabled();
 
         // ImGui::Checkbox( "Draw Sky", &settings.DrawSky );
+        ImGui::BeginDisabled( true ); // GOUC: forced ON, not user-changeable
         if ( ImGui::Checkbox( "Draw Fog", &settings.DrawFog ) ) {
             Engine::GraphicsEngine->ReloadShaders( ShaderCategory::Other );
         }
+        ImGui::EndDisabled();
         ImGui::SetItemTooltip( "Changing this will reload shaders." );
 
         ImGui::BeginDisabled( !settings.DrawFog );

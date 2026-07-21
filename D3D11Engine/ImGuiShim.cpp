@@ -167,6 +167,10 @@ void ImGuiShim::RenderLoop()
     }
 
     auto oldSettings = Engine::GAPI->GetRendererState().RendererSettings;
+    // GOUC: dritte Sperre - das erweiterte Menue kann nie sichtbar werden. Der else-Zweig bleibt
+    // absichtlich stehen, damit ein spaeterer Rebase die Stelle noch findet (und kein Code
+    // unreferenziert wird); wirksam ist die Zuweisung darueber.
+    AdvancedSettingsVisible = false;
     if ( SettingsVisible ) {
         RenderSettingsWindow();
     } else if ( AdvancedSettingsVisible ) {
@@ -818,11 +822,7 @@ void ImGuiShim::RenderSettingsWindow()
 
 
             ImGui::Spacing();
-            auto availableSize = ImGui::GetWindowSize();
-            static const char* advancedSettingsHint = "Advanced settings: CTRL+F11 ";
-            auto textSize = ImGui::CalcTextSize( advancedSettingsHint );
-            ImGui::SetCursorPos( ImVec2( (availableSize.x - textSize.x) - 15, availableSize.y - textSize.y - 50 ) );
-            ImGui::TextUnformatted( advancedSettingsHint );
+            // GOUC: Hinweis "Advanced settings: CTRL+F11" entfernt - das Menue ist gesperrt.
 
             ImGui::EndGroup();
         }

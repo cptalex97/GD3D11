@@ -138,10 +138,13 @@ void ImGuiShim::RenderLoop()
         goucForced.DrawFog = true;
         goucForced.EnableRain = true;
         goucForced.EnableRainEffects = true;
-        // Gamma (labeled "Contrast") & Brightness: at most +/-0.5 from the 1.0 default, so they
-        // cannot be cranked to see in the dark. Clamped to [0.5, 1.5] every frame (beats INI edits).
-        if ( goucForced.GammaValue < 0.5f ) goucForced.GammaValue = 0.5f; else if ( goucForced.GammaValue > 1.5f ) goucForced.GammaValue = 1.5f;
-        if ( goucForced.BrightnessValue < 0.5f ) goucForced.BrightnessValue = 0.5f; else if ( goucForced.BrightnessValue > 1.5f ) goucForced.BrightnessValue = 1.5f;
+        // Gamma (labeled "Contrast") & Brightness: only +/-0.1 around the 1.0 default.
+        // The previous +/-0.5 range was NOT enough: contrast at its LOWER stop together with
+        // brightness at its upper stop washes the image out and lifts the black point, which
+        // turned night into day without touching anything else (tester screenshot, 2026-07-21,
+        // in-game 23:14 at full daylight). Clamped every frame, so it also beats INI edits.
+        if ( goucForced.GammaValue < 0.9f ) goucForced.GammaValue = 0.9f; else if ( goucForced.GammaValue > 1.1f ) goucForced.GammaValue = 1.1f;
+        if ( goucForced.BrightnessValue < 0.9f ) goucForced.BrightnessValue = 0.9f; else if ( goucForced.BrightnessValue > 1.1f ) goucForced.BrightnessValue = 1.1f;
     }
 
     ImGui::GetIO().MouseDrawCursor = GetIsActive() && INT2( ImGui::GetMainViewport()->Size.x, ImGui::GetMainViewport()->Size.y ) != Engine::GraphicsEngine->GetResolution();
@@ -814,10 +817,10 @@ void ImGuiShim::RenderSettingsWindow()
             ImGui::SliderInt( "##SectionDrawRadius", &settings.SectionDrawRadius, 1, 20, "%d", ImGuiSliderFlags_::ImGuiSliderFlags_ClampOnInput );
 
             ImText( "Contrast", buttonWidth ); ImGui::SameLine();
-            ImGui::SliderFloat( "##Contrast", &settings.GammaValue, 0.50f, 1.50f, "%.2f", ImGuiSliderFlags_::ImGuiSliderFlags_ClampOnInput ); // GOUC: +/-0.5 from default
+            ImGui::SliderFloat( "##Contrast", &settings.GammaValue, 0.90f, 1.10f, "%.2f", ImGuiSliderFlags_::ImGuiSliderFlags_ClampOnInput ); // GOUC: +/-0.1 from default
 
             ImText( "Brightness", buttonWidth ); ImGui::SameLine();
-            ImGui::SliderFloat( "##Brightness", &settings.BrightnessValue, 0.50f, 1.50f, "%.2f", ImGuiSliderFlags_::ImGuiSliderFlags_ClampOnInput ); // GOUC: +/-0.5 from default
+            ImGui::SliderFloat( "##Brightness", &settings.BrightnessValue, 0.90f, 1.10f, "%.2f", ImGuiSliderFlags_::ImGuiSliderFlags_ClampOnInput ); // GOUC: +/-0.1 from default
             ImGui::PopItemWidth();
 
 

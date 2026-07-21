@@ -3832,11 +3832,10 @@ LRESULT GothicAPI::OnWindowMessage( HWND hWnd, UINT msg, WPARAM wParam, LPARAM l
        
 #endif
         case VK_F11:
-            if ( ( GetAsyncKeyState( VK_CONTROL ) & 0x8000 ) ) {
-                Engine::GraphicsEngine->OnUIEvent( BaseGraphicsEngine::EUIEvent::UI_ToggleAdvancedSettings );
-            } else {
-                Engine::GraphicsEngine->OnUIEvent( BaseGraphicsEngine::EUIEvent::UI_OpenSettings );
-            }
+            // GOUC: das erweiterte Renderer-Menue (CTRL+F11) ist gesperrt. Dort liessen sich
+            // Sicht-/Bildparameter so weit verstellen, dass man nachts praktisch bei Tag spielt
+            // (Sicht-Vorteil). F11 oeffnet deshalb IMMER nur das einfache Menue.
+            Engine::GraphicsEngine->OnUIEvent( BaseGraphicsEngine::EUIEvent::UI_OpenSettings );
             break;
 
         case VK_ESCAPE:

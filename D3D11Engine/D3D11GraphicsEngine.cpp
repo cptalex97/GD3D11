@@ -8133,15 +8133,11 @@ void D3D11GraphicsEngine::OnUIEvent( EUIEvent uiEvent ) {
         }
         UpdateClipCursor( OutputWindow );
     } else if ( uiEvent == UI_ToggleAdvancedSettings ) {
+        // GOUC: zweite Sperre. Selbst wenn dieses Event doch noch von irgendwo gefeuert wird,
+        // bleibt das erweiterte Menue zu (s. GothicAPI.cpp, case VK_F11).
         if ( auto hImgui = Engine::ImGuiHandle ) {
-            // Show settings
-            if ( hImgui->SettingsVisible ) {
-                hImgui->SettingsVisible = false;
-            }
-            hImgui->AdvancedSettingsVisible = !hImgui->AdvancedSettingsVisible;
-            UpdateShouldBlockGameInput();
+            hImgui->AdvancedSettingsVisible = false;
         }
-        UpdateClipCursor( OutputWindow );
     } else if ( uiEvent == UI_ClosedSettings ) {
         // Settings can be closed in multiple ways
         if ( auto hImgui = Engine::ImGuiHandle; hImgui->GetIsActive() ) {

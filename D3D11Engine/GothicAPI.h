@@ -224,7 +224,9 @@ struct MaterialInfo {
             // werden (9786621c) und die Defaults dadurch auf viel mehr Oberflaechen greifen,
             // wirkt die Welt sichtbar heller als mit dem bisherigen Renderer.
             // Zurueck auf die Werte, mit denen der Server bisher lief.
-            SpecularIntensity = 0.2f;
+            // 0.1f ist der Wert der alten Fork-Basis (11131834, dort buffer.SpecularIntensity).
+            // gouc-v6 stand hier faelschlich auf 0.2f = doppelter Glanz.
+            SpecularIntensity = 0.1f;
             SpecularPower = 60.0f;
             // ---
             

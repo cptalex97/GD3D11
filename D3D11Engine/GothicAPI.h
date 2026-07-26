@@ -218,8 +218,14 @@ struct MaterialInfo {
 
         void SetDefault() {
             // -- Defaults for NON Normalmapped, NON FX-Mapped materials
-            SpecularIntensity = 0.1f;
-            SpecularPower = 5.0f;
+            // GOUC: upstream senkte diese Defaults auf 0.1 / 5.0 (Commit 4fb2d028).
+            // SpecularPower 5 statt 60 macht aus dem schmalen Glanzlicht ein breites
+            // Flaechenglaenzen; zusammen damit, dass alte .mi-MaterialInfos jetzt ignoriert
+            // werden (9786621c) und die Defaults dadurch auf viel mehr Oberflaechen greifen,
+            // wirkt die Welt sichtbar heller als mit dem bisherigen Renderer.
+            // Zurueck auf die Werte, mit denen der Server bisher lief.
+            SpecularIntensity = 0.2f;
+            SpecularPower = 60.0f;
             // ---
             
             NormalmapStrength = 1.0f;

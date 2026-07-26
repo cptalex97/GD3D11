@@ -30,8 +30,8 @@ XRESULT D3D11LegacyDeferredShading::DrawPointlightLights(
 
     auto psPointLight = graphicsEngine->GetShaderManager().GetPShader( PShaderID::PS_DS_PointLight );
     auto psPointLightDynShadow = graphicsEngine->GetShaderManager().GetPShader( PShaderID::PS_DS_PointLightDynShadow );
-    auto plBuf = psPointLight->GetBuffer( "DS_PointLightConstantBuffer" );
-    auto plDynBuf = psPointLightDynShadow->GetBuffer( "DS_PointLightConstantBuffer" );
+    auto plBuf = psPointLight->GetInputIndex( "DS_PointLightConstantBuffer" );
+    auto plDynBuf = psPointLightDynShadow->GetInputIndex( "DS_PointLightConstantBuffer" );
 
     Engine::GAPI->GetRendererState().BlendState.SetAdditiveBlending();
     if ( settings.LimitLightIntesity ) {
@@ -67,6 +67,7 @@ XRESULT D3D11LegacyDeferredShading::DrawPointlightLights(
     specular.BindToPixelShader( context.Get(), 7 );
     depthCopy.BindToPixelShader( context.Get(), 2 );
 
+    auto cbPool = graphicsEngine->GetConstantBufferPool();
     for ( auto const& light : lights ) {
         zCVobLight* vob = light->Vob;
 
@@ -87,12 +88,13 @@ XRESULT D3D11LegacyDeferredShading::DrawPointlightLights(
         vob->DoAnimation();
 
         plcb.PL_Color = float4( vob->GetLightColor() );
+        plcb.PL_Color.w = vob->IsStatic() ? 0.0f : 1.0f;
         plcb.PL_Range = vob->GetLightRange();
         plcb.Pl_PositionWorld = vob->GetPositionWorld();
         plcb.PL_Outdoor = light->IsIndoorVob ? 0.0f : 1.0f;
 
         float dist;
-        XMStoreFloat( &dist, XMVector3Length( XMLoadFloat3( plcb.Pl_PositionWorld.toXMFLOAT3() ) - Engine::GAPI->GetCameraPositionXM() ) );
+        XMStoreFloat( &dist, XMVector3Length( XMLoadFloat3( &plcb.Pl_PositionWorld ) - Engine::GAPI->GetCameraPositionXM() ) );
 
         if ( dist + plcb.PL_Range <
             settings.VisualFXDrawRadius ) {
@@ -113,11 +115,11 @@ XRESULT D3D11LegacyDeferredShading::DrawPointlightLights(
         plcb.PL_Color.y *= lightFactor;
         plcb.PL_Color.z *= lightFactor;
 
-        FXMVECTOR Pl_PositionWorld = XMLoadFloat3( plcb.Pl_PositionWorld.toXMFLOAT3() );
-        XMStoreFloat3( plcb.Pl_PositionView.toXMFLOAT3(),
+        FXMVECTOR Pl_PositionWorld = XMLoadFloat3( &plcb.Pl_PositionWorld );
+        XMStoreFloat3( &plcb.Pl_PositionView,
             XMVector3TransformCoord( Pl_PositionWorld, view ) );
 
-        XMStoreFloat3( plcb.PL_LightScreenPos.toXMFLOAT3(),
+        XMStoreFloat3( &plcb.PL_LightScreenPos,
             XMVector3TransformCoord( Pl_PositionWorld, XMLoadFloat4x4( &Engine::GAPI->GetProjectionMatrix() ) ) );
 
         if ( dist < plcb.PL_Range ) {
@@ -142,8 +144,9 @@ XRESULT D3D11LegacyDeferredShading::DrawPointlightLights(
         plcb.PL_LightScreenPos.y = plcb.PL_LightScreenPos.y / -2.0f + 0.5f;
 
         auto& activePlBuf = (graphicsEngine->GetActivePS() == psPointLightDynShadow) ? plDynBuf : plBuf;
-        activePlBuf.Update( &plcb ).Bind();
-        activePlBuf.GetRawBuffer()->BindToVertexShader( 1 );
+        auto rainBufAllocation = cbPool->Allocate(&plcb, sizeof(plcb));
+        cbPool->BindPS(activePlBuf, rainBufAllocation);
+        cbPool->BindVS(1, rainBufAllocation);
 
         if ( settings.EnablePointlightShadows > 0 ) {
             if ( light->LightShadowBuffers )

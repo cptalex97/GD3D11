@@ -37,6 +37,7 @@ enum PS_DS_AtmosphericScatteringSlots {
     TX_Distortion = 6,
     TX_SI_SP = 7,
     TX_BlueNoise512 = 8,
+    TX_AOMask = 9,
 };
 
 const int POINTLIGHT_SHADOWMAP_SIZE = 128;
@@ -143,10 +144,10 @@ public:
     /** Renders the shadowmaps for the sun using parameter struct */
     void RenderShadowmaps( const RenderShadowmapsParams& params );
 
-    XRESULT DrawWorldLights();
+    XRESULT DrawWorldLights( ID3D11ShaderResourceView* aoMaskSRV = nullptr );
     DS_ScreenQuadConstantBuffer FillSunCSMConstantBuffer() const;
     XRESULT DrawLighting(std::vector<VobLightInfo*>& lights, RenderToTextureBuffer& color, RenderToTextureBuffer& normals, RenderToTextureBuffer
-                         & specular, RenderToTextureBuffer& depthCopy);
+                         & specular, RenderToTextureBuffer& depthCopy, ID3D11ShaderResourceView* aoMaskSRV = nullptr);
 
     D3D11TiledDeferredShading* GetTiledDeferred() const { return m_TiledDeferred.get(); }
 
@@ -162,7 +163,8 @@ public:
         std::list<SkeletalVobInfo*>* renderedMobs = nullptr,
         std::vector<std::pair<MeshKey, MeshInfo*>>* worldMeshCache = nullptr,
         bool clearDepth = true,
-        unsigned int casterMask = 0xFFFFFFFFu );
+        unsigned int casterMask = 0xFFFFFFFFu,
+        const std::move_only_function<bool(const zCVob*) const>& ignoreVob = nullptr );
 
     inline static struct { float lambda; float bias; } lambdaBiasTable[] {
         /* 0 */ { 0, 0 },
@@ -192,7 +194,6 @@ private:
     bool m_useAtlas = false;
 
     std::unique_ptr<RenderToTextureBuffer> m_dummyCubeRT;
-    std::unique_ptr<D3D11ConstantBuffer> m_PointLightCB;
 
     Microsoft::WRL::ComPtr<ID3D11SamplerState> m_shadowmapSampler;
     int m_lastNumCascades = 0;

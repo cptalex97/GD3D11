@@ -13,8 +13,8 @@
 #include "zCModel.h"
 #include "zCMorphMesh.h"
 #include <set>
+#include <unordered_map>
 #include "ConstantBufferStructs.h"
-#include "D3D11ConstantBuffer.h"
 #include "zCMesh.h"
 #include "zCLightmap.h"
 #include "GMesh.h"
@@ -24,6 +24,9 @@
 #include "zCQuadMark.h"
 #include <meshoptimizer/src/meshoptimizer.h>
 #include "MeshManager.h"
+#include "ThreadPool.h"
+#include "vendor/mikktspace.h"
+#include "VertexPacking.h"
 
 extern MeshManager* s_MeshManager;
 
@@ -37,11 +40,89 @@ namespace {
             return;
         }
 
-        Engine::GraphicsEngine->CreateVertexBuffer( &meshInfo->MeshShadowIndexBuffer );
+        Engine::GraphicsEngine->CreateVertexBuffer( meshInfo->MeshShadowIndexBuffer );
         meshInfo->MeshShadowIndexBuffer->Init( meshInfo->ShadowIndices.data(),
             meshInfo->ShadowIndices.size() * sizeof( VERTEX_INDEX ),
             D3D11VertexBuffer::B_INDEXBUFFER,
             D3D11VertexBuffer::U_IMMUTABLE );
+    }
+
+    /** Builds a position-only (float3) companion buffer in the same vertex ordering as the source
+        interleaved vertices. Bound for opaque depth/shadow passes; indices remain valid because the
+        ordering matches the mesh/shadow index buffers built from the same array. */
+    void BuildWrappedPositionBuffer( MeshInfo* meshInfo, const std::vector<ExVertexStruct>& vertices ) {
+        if ( !meshInfo || vertices.empty() ) {
+            return;
+        }
+
+        std::vector<float3> positions;
+        positions.reserve( vertices.size() );
+        for ( const auto& v : vertices ) {
+            positions.emplace_back( v.Position );
+        }
+
+        Engine::GraphicsEngine->CreateVertexBuffer( meshInfo->MeshPositionBuffer );
+        meshInfo->MeshPositionBuffer->Init( positions.data(),
+            static_cast<unsigned int>(positions.size() * sizeof( float3 )),
+            D3D11VertexBuffer::B_VERTEXBUFFER,
+            D3D11VertexBuffer::U_IMMUTABLE );
+    }
+
+    // --- MikkTSpace tangent generation ---------------------------------------------------
+    // Operates on an indexed triangle mesh. MikkTSpace welds internally; because our index
+    // buffer only merges vertices that already share position/normal/UV (see the meshopt key
+    // buffer), writing per-corner results back through the shared index is safe here.
+    struct MikkMeshData {
+        std::vector<ExVertexStruct>* Vertices;
+        const std::vector<VERTEX_INDEX>* Indices;
+    };
+
+    inline ExVertexStruct& MikkVert( const SMikkTSpaceContext* ctx, int face, int vert ) {
+        auto* d = static_cast<MikkMeshData*>(ctx->m_pUserData);
+        return (*d->Vertices)[(*d->Indices)[face * 3 + vert]];
+    }
+
+    int Mikk_GetNumFaces( const SMikkTSpaceContext* ctx ) {
+        auto* d = static_cast<MikkMeshData*>(ctx->m_pUserData);
+        return static_cast<int>(d->Indices->size() / 3);
+    }
+    int Mikk_GetNumVerticesOfFace( const SMikkTSpaceContext*, const int ) { return 3; }
+    void Mikk_GetPosition( const SMikkTSpaceContext* ctx, float out[], const int f, const int v ) {
+        const float3& p = MikkVert( ctx, f, v ).Position;
+        out[0] = p.x; out[1] = p.y; out[2] = p.z;
+    }
+    void Mikk_GetNormal( const SMikkTSpaceContext* ctx, float out[], const int f, const int v ) {
+        const float3& n = MikkVert( ctx, f, v ).Normal;
+        out[0] = n.x; out[1] = n.y; out[2] = n.z;
+    }
+    void Mikk_GetTexCoord( const SMikkTSpaceContext* ctx, float out[], const int f, const int v ) {
+        const float2& t = MikkVert( ctx, f, v ).TexCoord;  // UV0 (the texture UV used for normal mapping)
+        out[0] = t.x; out[1] = t.y;
+    }
+    void Mikk_SetTSpaceBasic( const SMikkTSpaceContext* ctx, const float tangent[], const float sign, const int f, const int v ) {
+        MikkVert( ctx, f, v ).Tangent = float4( tangent[0], tangent[1], tangent[2], sign );
+    }
+
+    /** Fills ExVertexStruct::Tangent for an indexed mesh using MikkTSpace. */
+    void GenerateTangents( std::vector<ExVertexStruct>& vertices, const std::vector<VERTEX_INDEX>& indices ) {
+        if ( indices.size() < 3 || vertices.empty() ) {
+            return;
+        }
+
+        MikkMeshData data{ &vertices, &indices };
+
+        SMikkTSpaceInterface iface = {};
+        iface.m_getNumFaces = Mikk_GetNumFaces;
+        iface.m_getNumVerticesOfFace = Mikk_GetNumVerticesOfFace;
+        iface.m_getPosition = Mikk_GetPosition;
+        iface.m_getNormal = Mikk_GetNormal;
+        iface.m_getTexCoord = Mikk_GetTexCoord;
+        iface.m_setTSpaceBasic = Mikk_SetTSpaceBasic;
+
+        SMikkTSpaceContext ctx = {};
+        ctx.m_pInterface = &iface;
+        ctx.m_pUserData = &data;
+        genTangSpaceDefault( &ctx );
     }
 
     void ComputeWorldMeshBounds( WorldMeshInfo* meshInfo ) {
@@ -67,6 +148,108 @@ namespace {
         meshInfo->BoundingBox.Max = bbMax;
         meshInfo->HasBoundingBox = true;
     }
+
+    void BuildWorldMeshBuffers( WorldMeshInfo* mesh ) {
+        ZoneScoped;
+        std::vector<ExVertexStruct> indexedVertices;
+        std::vector<VERTEX_INDEX> indices;
+        WorldConverter::IndexVertices( &mesh->Vertices[0], mesh->Vertices.size(), indexedVertices, indices );
+
+        mesh->Vertices = std::move( indexedVertices );
+        mesh->Indices = std::move( indices );
+        ComputeWorldMeshBounds( mesh );
+
+        // Create the buffers
+        Engine::GraphicsEngine->CreateVertexBuffer( mesh->MeshVertexBuffer );
+        Engine::GraphicsEngine->CreateVertexBuffer( mesh->MeshIndexBuffer );
+
+        // Generate normals
+        WorldConverter::GenerateVertexNormals( mesh->Vertices, mesh->Indices );
+
+        // Precompute MikkTSpace tangents (after final normals; survives the remap passes below
+        // because they move the whole ExVertexStruct stride, including Tangent).
+        GenerateTangents( mesh->Vertices, mesh->Indices );
+
+        // Optimize faces
+        mesh->MeshVertexBuffer->OptimizeFaces( &mesh->Indices[0],
+            reinterpret_cast<byte*>(&mesh->Vertices[0]),
+            mesh->Indices.size(),
+            mesh->Vertices.size(),
+            sizeof( ExVertexStruct ) );
+
+        // Then optimize vertices
+        mesh->MeshVertexBuffer->OptimizeVertices( &mesh->Indices[0],
+            reinterpret_cast<byte*>(&mesh->Vertices[0]),
+            mesh->Indices.size(),
+            mesh->Vertices.size(),
+            sizeof( ExVertexStruct ),
+            &mesh->ShadowIndices );
+
+        // Init and fill them
+        mesh->MeshVertexBuffer->Init( &mesh->Vertices[0], mesh->Vertices.size() * sizeof( ExVertexStruct ), D3D11VertexBuffer::B_VERTEXBUFFER, D3D11VertexBuffer::U_IMMUTABLE );
+        mesh->MeshIndexBuffer->Init( &mesh->Indices[0], mesh->Indices.size() * sizeof( VERTEX_INDEX ), D3D11VertexBuffer::B_INDEXBUFFER, D3D11VertexBuffer::U_IMMUTABLE );
+        CreateShadowIndexBuffer( mesh );
+    }
+
+    /** Some authored VOB meshes (eg. tree/foliage assets) contain wedges with a
+ *  zero-length normal (degenerate source data). Unlike world-section geometry,
+ *  VOB normals are copied verbatim from the original mesh data and never
+ *  regenerated, so a zero vector survives untouched through the whole
+ *  pipeline and shades as pure black. Recompute a geometric fallback from the
+ *  surrounding triangles' face normals for just those vertices; anything with
+ *  a valid authored normal is left untouched. */
+    // True for zero-length, NaN or infinite normals - anything unsafe to light with.
+    // Written as "not > threshold" (rather than "<= threshold") so NaN, which
+    // compares false against everything, is also caught as bad instead of slipping through.
+    bool IsDegenerateNormal( FXMVECTOR n ) {
+        float len2 = XMVectorGetX( XMVector3LengthSq( n ) );
+        return !(len2 > 1e-12f) || !(len2 < 1e12f);
+    }
+
+    void RepairZeroLengthVertexNormals( std::vector<ExVertexStruct>& vertices, const std::vector<VERTEX_INDEX>& indices ) {
+        bool anyZero = false;
+        for ( auto const& vx : vertices ) {
+            if ( IsDegenerateNormal( XMLoadFloat3( &vx.Normal ) ) ) {
+                anyZero = true;
+                break;
+            }
+        }
+        if ( !anyZero )
+            return;
+
+        std::vector<XMFLOAT3> accum( vertices.size(), XMFLOAT3( 0, 0, 0 ) );
+        for ( size_t i = 0; i + 2 < indices.size(); i += 3 ) {
+            VERTEX_INDEX i0 = indices[i], i1 = indices[i + 1], i2 = indices[i + 2];
+            XMVECTOR p0 = XMLoadFloat3( &vertices[i0].Position );
+            XMVECTOR p1 = XMLoadFloat3( &vertices[i1].Position );
+            XMVECTOR p2 = XMLoadFloat3( &vertices[i2].Position );
+            XMVECTOR faceNormal = XMVector3Cross( p1 - p0, p2 - p0 );
+            if ( IsDegenerateNormal( faceNormal ) )
+                continue;
+
+            for ( VERTEX_INDEX idx : { i0, i1, i2 } ) {
+                if ( IsDegenerateNormal( XMLoadFloat3( &vertices[idx].Normal ) ) ) {
+                    XMFLOAT3 sum;
+                    XMStoreFloat3( &sum, XMLoadFloat3( &accum[idx] ) + faceNormal );
+                    accum[idx] = sum;
+                }
+            }
+        }
+
+        for ( size_t i = 0; i < vertices.size(); i++ ) {
+            if ( !IsDegenerateNormal( XMLoadFloat3( &vertices[i].Normal ) ) )
+                continue;
+
+            XMVECTOR n = XMLoadFloat3( &accum[i] );
+            n = IsDegenerateNormal( n )
+                ? XMVectorSet( 0.0f, 1.0f, 0.0f, 0.0f )
+                : XMVector3Normalize( n );
+
+            XMFLOAT3 result;
+            XMStoreFloat3( &result, n );
+            vertices[i].Normal = result;
+        }
+    }
 }
 
 /** Collects all world-polys in the specific range. Drops all materials that have no alphablending */
@@ -83,7 +266,7 @@ void WorldConverter::WorldMeshCollectPolyRange( const float3& position, float ra
     MeshInfo* opaqueMesh = new MeshInfo;
     outMeshes.emplace_back(opaqueKey, opaqueMesh);
 
-    FXMVECTOR xmPosition = XMLoadFloat3( position.toXMFLOAT3() );
+    XMVECTOR xmPosition = XMLoadFloat3( &position );
 
 
     XMVECTOR vRange2 = XMVectorReplicate( range );
@@ -121,9 +304,9 @@ void WorldConverter::WorldMeshCollectPolyRange( const float3& position, float ra
                     for ( unsigned int i = 0; i < it.second->Indices.size(); i += 3 ) {
                         // Check if one of them is in range
 
-                        XMVECTOR v0 = XMLoadFloat3( it.second->Vertices[it.second->Indices[i + 0]].Position.toXMFLOAT3() );
-                        XMVECTOR v1 = XMLoadFloat3( it.second->Vertices[it.second->Indices[i + 1]].Position.toXMFLOAT3() );
-                        XMVECTOR v2 = XMLoadFloat3( it.second->Vertices[it.second->Indices[i + 2]].Position.toXMFLOAT3() );
+                        XMVECTOR v0 = XMLoadFloat3( &it.second->Vertices[it.second->Indices[i + 0]].Position );
+                        XMVECTOR v1 = XMLoadFloat3( &it.second->Vertices[it.second->Indices[i + 1]].Position );
+                        XMVECTOR v2 = XMLoadFloat3( &it.second->Vertices[it.second->Indices[i + 2]].Position );
 
                         if ( XMVector3Less( XMVector3LengthSq( XMVectorSubtract( xmPosition, v0 ) ), vRange2 ) ||
                             XMVector3Less( XMVector3LengthSq( XMVectorSubtract( xmPosition, v1 ) ), vRange2 ) ||
@@ -158,8 +341,8 @@ void WorldConverter::WorldMeshCollectPolyRange( const float3& position, float ra
         it.second->Indices = std::move( indices );
 
         // Create the buffers
-        Engine::GraphicsEngine->CreateVertexBuffer( &it.second->MeshVertexBuffer );
-        Engine::GraphicsEngine->CreateVertexBuffer( &it.second->MeshIndexBuffer );
+        Engine::GraphicsEngine->CreateVertexBuffer( it.second->MeshVertexBuffer );
+        Engine::GraphicsEngine->CreateVertexBuffer( it.second->MeshIndexBuffer );
 
         // Optimize index and vertex locality before uploading immutable buffers.
         it.second->MeshVertexBuffer->OptimizeFaces( it.second->Indices.data(),
@@ -192,10 +375,19 @@ XRESULT WorldConverter::LoadWorldMeshFromFile( const std::string& file, std::map
     const float worldScale = 100.0f;
 
     // Check if we have this file cached
+    bool loadedFromCache = false;
     if ( Toolbox::FileExists( (file + ".mcache").c_str() ) ) {
         // Load the meshfile, cached
-        mesh->LoadMesh( (file + ".mcache").c_str(), worldScale );
-    } else {
+        if ( mesh->LoadMesh( (file + ".mcache").c_str(), worldScale ) == XR_SUCCESS ) {
+            loadedFromCache = true;
+        } else {
+            // Incompatible/stale cache (e.g. vertex-format version bump): discard and rebuild.
+            delete mesh;
+            mesh = new GMesh();
+        }
+    }
+
+    if ( !loadedFromCache ) {
         // Create cache-file
         mesh->LoadMesh( file, worldScale );
 
@@ -232,7 +424,7 @@ XRESULT WorldConverter::LoadWorldMeshFromFile( const std::string& file, std::map
         } else {
             if ( mat->GetMatGroup() == zMAT_GROUP_WATER ) {
                 // Give water surfaces a water-shader
-                MaterialInfo* info = Engine::GAPI->GetMaterialInfoFrom( mat->GetTextureSingle() );
+                MaterialInfo* info = Engine::GAPI->GetMaterialInfoFrom( mat);
                 if ( info ) {
                     info->PixelShader = PShaderID::PS_Water;
                     info->MaterialType = MaterialInfo::MT_Water;
@@ -266,7 +458,7 @@ XRESULT WorldConverter::LoadWorldMeshFromFile( const std::string& file, std::map
 
             // Calculate midpoint of this triange to get the section
             XMFLOAT3 avgPos;
-            XMStoreFloat3( &avgPos, XMLoadFloat3( &*v[0]->Position.toXMFLOAT3() ) + XMLoadFloat3( &*v[1]->Position.toXMFLOAT3() ) + XMLoadFloat3( &*v[2]->Position.toXMFLOAT3() ) / 3.0f );
+            XMStoreFloat3( &avgPos, XMLoadFloat3( &v[0]->Position ) + XMLoadFloat3( &v[1]->Position ) + XMLoadFloat3( &v[2]->Position ) / 3.0f );
             INT2 sxy = GetSectionOfPos( avgPos );
 
             WorldMeshSectionInfo& section = (*outSections)[sxy.x][sxy.y];
@@ -285,7 +477,7 @@ XRESULT WorldConverter::LoadWorldMeshFromFile( const std::string& file, std::map
             bbmax.z = bbmax.z < v[0]->Position.z ? v[0]->Position.z : bbmax.z;
 
             if ( section.WorldMeshes.find( key ) == section.WorldMeshes.end() ) {
-                key.Info = Engine::GAPI->GetMaterialInfoFrom( key.Texture );
+                key.Info = Engine::GAPI->GetMaterialInfoFrom( key.Material );
 
                 section.WorldMeshes[key] = new WorldMeshInfo;
 
@@ -333,9 +525,12 @@ XRESULT WorldConverter::LoadWorldMeshFromFile( const std::string& file, std::map
                 it.second->Indices = std::move( indices );
                 ComputeWorldMeshBounds( it.second );
 
+                // Precompute MikkTSpace tangents (cached-mesh load path; normals come from the cache).
+                GenerateTangents( it.second->Vertices, it.second->Indices );
+
                 // Create the buffers
-                Engine::GraphicsEngine->CreateVertexBuffer( &it.second->MeshVertexBuffer );
-                Engine::GraphicsEngine->CreateVertexBuffer( &it.second->MeshIndexBuffer );
+                Engine::GraphicsEngine->CreateVertexBuffer( it.second->MeshVertexBuffer );
+                Engine::GraphicsEngine->CreateVertexBuffer( it.second->MeshIndexBuffer );
 
                 // Optimize faces
                 it.second->MeshVertexBuffer->OptimizeFaces( &it.second->Indices[0],
@@ -400,14 +595,21 @@ XRESULT WorldConverter::LoadWorldMeshFromFile( const std::string& file, std::map
 
     // Create the buffers for wrapped mesh
     MeshInfo* wmi = new MeshInfo;
-    Engine::GraphicsEngine->CreateVertexBuffer( &wmi->MeshVertexBuffer );
-    Engine::GraphicsEngine->CreateVertexBuffer( &wmi->MeshIndexBuffer );
-    Engine::GraphicsEngine->CreateVertexBuffer( &wmi->MeshShadowIndexBuffer );
+    Engine::GraphicsEngine->CreateVertexBuffer( wmi->MeshVertexBuffer );
+    Engine::GraphicsEngine->CreateVertexBuffer( wmi->MeshIndexBuffer );
+    Engine::GraphicsEngine->CreateVertexBuffer( wmi->MeshShadowIndexBuffer );
 
-    // Init and fill them
-    wmi->MeshVertexBuffer->Init( &wrappedVertices[0], wrappedVertices.size() * sizeof( ExVertexStruct ), D3D11VertexBuffer::B_VERTEXBUFFER, D3D11VertexBuffer::U_IMMUTABLE );
+    // Init and fill them. The wrapped world mesh is uploaded in the packed 36-byte GPU format
+    // (see VertexPacking.h); it is drawn by VS_ExPacked (color) / the packed alpha depth-shadow path.
+    {
+        std::vector<ExVertexStructGPU> packed = VertexPacking::Pack( wrappedVertices.data(), wrappedVertices.size() );
+        wmi->MeshVertexBuffer->Init( packed.data(), static_cast<unsigned int>(packed.size() * sizeof( ExVertexStructGPU )), D3D11VertexBuffer::B_VERTEXBUFFER, D3D11VertexBuffer::U_IMMUTABLE );
+    }
     wmi->MeshIndexBuffer->Init( &wrappedIndices[0], wrappedIndices.size() * sizeof( unsigned int ), D3D11VertexBuffer::B_INDEXBUFFER, D3D11VertexBuffer::U_IMMUTABLE );
     wmi->MeshShadowIndexBuffer->Init( &wrappedShadowIndices[0], wrappedShadowIndices.size() * sizeof( unsigned int ), D3D11VertexBuffer::B_INDEXBUFFER, D3D11VertexBuffer::U_IMMUTABLE );
+
+    // Position-only companion stream for opaque depth/shadow passes (same ordering as above).
+    BuildWrappedPositionBuffer( wmi, wrappedVertices );
 
     *outWrappedMesh = wmi;
 
@@ -437,7 +639,7 @@ static bool findStringIC( const std::string_view strHaystack, const std::string_
     return (it != strHaystack.end());
 }
 
-bool AdditionalCheckWaterFall(zCTexture* texture)
+static bool AdditionalCheckWaterFall(const zCTexture* texture)
 {
     if ( !texture ) {
         return false;
@@ -445,9 +647,11 @@ bool AdditionalCheckWaterFall(zCTexture* texture)
     const std::string_view textureName = texture->GetNameView();
 #ifdef BUILD_GOTHIC_2_6_fix
     if ( findStringIC( textureName, "FALL" )
-        && findStringIC( textureName, "A0" ) 
+        && findStringIC( textureName, "_A0" ) 
         && !findStringIC( textureName, "SURFACE" )
         && !findStringIC( textureName, "STONE" )
+        // Fix for "Waterfalls" in snow areas, else they get the water shader
+        && !findStringIC( textureName, "WINTER" ) 
     ) {
 #else
     if ( findStringIC( textureName, "FALL" ) && (findStringIC( textureName, "SURFACE" ) || findStringIC( textureName, "STONE" )) ) {
@@ -460,9 +664,10 @@ bool AdditionalCheckWaterFall(zCTexture* texture)
 
 static bool IsPortalMaterial( std::string_view matName )
 {
-    return matName.starts_with( "P:" )
+    return matName.starts_with( "P" ) &&
+        (matName.starts_with( "P:" )
         || matName.starts_with( "PN:" )
-        || matName.starts_with( "PI:" );
+        || matName.starts_with( "PI:" ));
 }
 
 /** Converts the worldmesh into a more usable format */
@@ -471,6 +676,16 @@ HRESULT WorldConverter::ConvertWorldMesh( zCPolygon** polys, unsigned int numPol
     
     // Go through every polygon and put it into its section
     std::vector<ExVertexStruct> polyVertices;
+
+    std::unordered_map<const zCTexture*, bool> waterFallCheckCache;
+    auto checkWaterFallCached = [&waterFallCheckCache]( const zCTexture* texture ) -> bool {
+        auto [it, inserted] = waterFallCheckCache.try_emplace( texture, false );
+        if ( inserted ) {
+            it->second = AdditionalCheckWaterFall( texture );
+        }
+        return it->second;
+    };
+
     for ( unsigned int i = 0; i < numPolygons; i++ ) {
         zCPolygon* poly = polys[i];
 
@@ -483,14 +698,15 @@ HRESULT WorldConverter::ConvertWorldMesh( zCPolygon** polys, unsigned int numPol
         if ( !mat ) {
             continue;
         }
-        std::string_view matName = mat->__GetName().ToChar();
+
+        std::string_view matName = mat->GetNameView();
         // std::string_view textureName = mat->GetTextureSingle() ? mat->GetTextureSingle()->__GetName().ToChar() : "";
 
         // Flag portals so that we can apply a different PS shader later
         zCTexture* _tex = nullptr;
         if ( poly->GetPolyFlags()->PortalPoly || IsPortalMaterial( matName ) ) {
             if ( const zCTexture* tex = mat->GetTextureSingle() ) {
-                std::string_view textureName = tex->__GetName().ToChar();
+                std::string_view textureName = tex->GetNameView();
                 if ( textureName.starts_with("OWODFLWOODGROUND.") ) {
                     continue; // this is a ground texture that is sometimes re-used for visual tricks to darken tunnels, etc. We don't want to treat this as a portal.
                 } else {
@@ -498,7 +714,7 @@ HRESULT WorldConverter::ConvertWorldMesh( zCPolygon** polys, unsigned int numPol
                     // it only work because DrawMeshInfoListAlphablended use texture from material
                     _tex = reinterpret_cast<zCTexture*>(reinterpret_cast<DWORD>(tex) + 1);
 
-                    MaterialInfo* info = Engine::GAPI->GetMaterialInfoFrom( _tex, textureName );
+                    MaterialInfo* info = Engine::GAPI->GetMaterialInfoFrom( mat );
                     info->MaterialType = MaterialInfo::MT_Portal;
                 }
             } else {
@@ -507,8 +723,9 @@ HRESULT WorldConverter::ConvertWorldMesh( zCPolygon** polys, unsigned int numPol
         }
 
         // Calculate midpoint of this triange to get the section
+        const auto verts = poly->getVertices();
         XMFLOAT3 avgPos;
-        XMStoreFloat3( &avgPos, (XMLoadFloat3( poly->getVertices()[0]->Position.toXMFLOAT3() ) + XMLoadFloat3( poly->getVertices()[1]->Position.toXMFLOAT3() ) + XMLoadFloat3( poly->getVertices()[2]->Position.toXMFLOAT3() )) / 3.0f );
+        XMStoreFloat3( &avgPos, (XMLoadFloat3( &verts[0]->Position ) + XMLoadFloat3( &verts[1]->Position ) + XMLoadFloat3( &verts[2]->Position )) / 3.0f );
  
         INT2 section = GetSectionOfPos( avgPos );
         WorldMeshSectionInfo& sectionInfo = (*outSections)[section.x][section.y];
@@ -528,14 +745,14 @@ HRESULT WorldConverter::ConvertWorldMesh( zCPolygon** polys, unsigned int numPol
 
         auto it = sectionInfo.WorldMeshes.find( key );
         if ( it == sectionInfo.WorldMeshes.end() ) {
-            key.Info = Engine::GAPI->GetMaterialInfoFrom( key.Texture );
+            key.Info = Engine::GAPI->GetMaterialInfoFrom( mat );
             it = sectionInfo.WorldMeshes.emplace( key, new WorldMeshInfo ).first;
         }
 
         int matGroup = mat->GetMatGroup();
 #ifdef BUILD_GOTHIC_2_6_fix
         if ( matGroup != zMAT_GROUP_WATER && !_tex ) {
-            if ( AdditionalCheckWaterFall( key.Texture ) ) {
+            if ( checkWaterFallCached( key.Texture ) ) {
                 matGroup = zMAT_GROUP_WATER;
             }
         }
@@ -565,7 +782,7 @@ HRESULT WorldConverter::ConvertWorldMesh( zCPolygon** polys, unsigned int numPol
             bbmax.z = bbmax.z < vertex->Position.z ? vertex->Position.z : bbmax.z;
 
             if ( poly->GetLightmap() ) {
-                t.TexCoord2 = poly->GetLightmap()->GetLightmapUV( *t.Position.toXMFLOAT3() );
+                t.TexCoord2 = poly->GetLightmap()->GetLightmapUV( t.Position );
                 t.Color = DEFAULT_LIGHTMAP_POLY_COLOR;
             } else if ( indoorLocation ) {
                 t.TexCoord2 = float2( 0.0f, 0.0f );
@@ -598,8 +815,8 @@ HRESULT WorldConverter::ConvertWorldMesh( zCPolygon** polys, unsigned int numPol
         TriangleFanToList( &polyVertices[0], polyVertices.size(), &it->second->Vertices );
         if ( matGroup == zMAT_GROUP_WATER && !mat->HasAlphaTest() ) {
 #ifdef BUILD_GOTHIC_1_08k
-            MaterialInfo* info = Engine::GAPI->GetMaterialInfoFrom( key.Texture );
-            if ( !(AdditionalCheckWaterFall( key.Texture )) ) { 
+            MaterialInfo* info = Engine::GAPI->GetMaterialInfoFrom( mat );
+            if ( !(checkWaterFallCached( key.Texture )) ) {
                 // Give water surfaces a water-shader
                 if ( info ) {
                     info->PixelShader = PShaderID::PS_Water;
@@ -615,7 +832,7 @@ HRESULT WorldConverter::ConvertWorldMesh( zCPolygon** polys, unsigned int numPol
             }
 #else
             // Give water surfaces a water-shader
-            MaterialInfo* info = Engine::GAPI->GetMaterialInfoFrom( key.Texture );
+            MaterialInfo* info = Engine::GAPI->GetMaterialInfoFrom( mat );
             if ( info ) {
                 info->PixelShader = PShaderID::PS_Water;
                 info->MaterialType = MaterialInfo::MT_Water;
@@ -631,56 +848,58 @@ HRESULT WorldConverter::ConvertWorldMesh( zCPolygon** polys, unsigned int numPol
     std::list<std::vector<VERTEX_INDEX>*> indexBuffers;
     std::list<std::vector<VERTEX_INDEX>*> shadowIndexBuffers;
 
-    // Create the vertexbuffers for every material
+    // Flatten all meshes into a single list in deterministic map-iteration order.
+    // The buffer-collection order below must match this order, because WrapVertexBuffers
+    // returns offsets in insertion order and they get propagated back by re-iterating
+    // the section maps in the same order.
+    std::vector<WorldMeshInfo*> allMeshes;
     for ( auto const& itx : *outSections ) {
         for ( auto const& ity : itx.second ) {
             numSections++;
             avgSections += XMVectorSet( (float)itx.first, (float)ity.first, 0, 0 );
 
             for ( auto const& it : ity.second.WorldMeshes ) {
-                std::vector<ExVertexStruct> indexedVertices;
-                std::vector<VERTEX_INDEX> indices;
-                IndexVertices( &it.second->Vertices[0], it.second->Vertices.size(), indexedVertices, indices );
-
-                it.second->Vertices = std::move( indexedVertices );
-                it.second->Indices = std::move( indices );
-                ComputeWorldMeshBounds( it.second );
-
-                // Create the buffers
-                Engine::GraphicsEngine->CreateVertexBuffer( &it.second->MeshVertexBuffer );
-                Engine::GraphicsEngine->CreateVertexBuffer( &it.second->MeshIndexBuffer );
-
-                // Generate normals
-                GenerateVertexNormals( it.second->Vertices, it.second->Indices );
-
-                // Optimize faces
-                it.second->MeshVertexBuffer->OptimizeFaces( &it.second->Indices[0],
-                    reinterpret_cast<byte*>(&it.second->Vertices[0]),
-                    it.second->Indices.size(),
-                    it.second->Vertices.size(),
-                    sizeof( ExVertexStruct ) );
-
-                // Then optimize vertices
-                it.second->MeshVertexBuffer->OptimizeVertices( &it.second->Indices[0],
-                    reinterpret_cast<byte*>(&it.second->Vertices[0]),
-                    it.second->Indices.size(),
-                    it.second->Vertices.size(),
-                    sizeof( ExVertexStruct ),
-                    &it.second->ShadowIndices );
-
-                // Init and fill them
-                it.second->MeshVertexBuffer->Init( &it.second->Vertices[0], it.second->Vertices.size() * sizeof( ExVertexStruct ), D3D11VertexBuffer::B_VERTEXBUFFER, D3D11VertexBuffer::U_IMMUTABLE );
-                it.second->MeshIndexBuffer->Init( &it.second->Indices[0], it.second->Indices.size() * sizeof( VERTEX_INDEX ), D3D11VertexBuffer::B_INDEXBUFFER, D3D11VertexBuffer::U_IMMUTABLE );
-                CreateShadowIndexBuffer( it.second );
-
-                // Remember them, to wrap then up later
-                vertexBuffers.emplace_back( &it.second->Vertices );
-                indexBuffers.emplace_back( &it.second->Indices );
-                shadowIndexBuffers.emplace_back( it.second->ShadowIndices.empty()
-                    ? &it.second->Indices
-                    : &it.second->ShadowIndices );
+                allMeshes.emplace_back( it.second );
             }
         }
+    }
+
+    // Build the vertex/index buffers for every mesh concurrently. Each mesh only
+    // touches its own data, so we batch them into a small number of contiguous
+    // chunks to keep the pool busy without drowning it in tiny tasks
+    const size_t total = allMeshes.size();
+    if ( total > 0 ) {
+        const size_t numThreads = std::max<size_t>( 1, Engine::WorkerThreadPool->getNumThreads() );
+        constexpr size_t MIN_BATCH = 32; // don't create tasks smaller than this
+        size_t batches = std::min<size_t>( numThreads * 2, (total + MIN_BATCH - 1) / MIN_BATCH );
+        batches = std::max<size_t>( 1, batches );
+        const size_t chunk = (total + batches - 1) / batches;
+
+        std::vector<std::future<void>> jobs;
+        jobs.reserve( batches );
+        for ( size_t start = 0; start < total; start += chunk ) {
+            const size_t end = std::min( start + chunk, total );
+            jobs.emplace_back( Engine::WorkerThreadPool->enqueue(
+                [&allMeshes, start, end]( const std::stop_token& ) {
+                    ZoneScopedN( "WorldMesh buffer batch" );
+                    for ( size_t i = start; i < end; ++i ) {
+                        BuildWorldMeshBuffers( allMeshes[i] );
+                    }
+                } ).future );
+        }
+        for ( auto& j : jobs ) {
+            if ( j.valid() ) {
+                j.wait();
+            }
+        }
+    }
+
+    for ( WorldMeshInfo* mesh : allMeshes ) {
+        vertexBuffers.emplace_back( &mesh->Vertices );
+        indexBuffers.emplace_back( &mesh->Indices );
+        shadowIndexBuffers.emplace_back( mesh->ShadowIndices.empty()
+            ? &mesh->Indices
+            : &mesh->ShadowIndices );
     }
 
     std::vector<ExVertexStruct> wrappedVertices;
@@ -709,14 +928,21 @@ HRESULT WorldConverter::ConvertWorldMesh( zCPolygon** polys, unsigned int numPol
 
     // Create the buffers for wrapped mesh
     MeshInfo* wmi = new MeshInfo();
-    Engine::GraphicsEngine->CreateVertexBuffer( &wmi->MeshVertexBuffer );
-    Engine::GraphicsEngine->CreateVertexBuffer( &wmi->MeshIndexBuffer );
-    Engine::GraphicsEngine->CreateVertexBuffer( &wmi->MeshShadowIndexBuffer );
+    Engine::GraphicsEngine->CreateVertexBuffer( wmi->MeshVertexBuffer );
+    Engine::GraphicsEngine->CreateVertexBuffer( wmi->MeshIndexBuffer );
+    Engine::GraphicsEngine->CreateVertexBuffer( wmi->MeshShadowIndexBuffer );
 
-    // Init and fill them
-    wmi->MeshVertexBuffer->Init( &wrappedVertices[0], wrappedVertices.size() * sizeof( ExVertexStruct ), D3D11VertexBuffer::B_VERTEXBUFFER, D3D11VertexBuffer::U_IMMUTABLE );
+    // Init and fill them. The wrapped world mesh is uploaded in the packed 36-byte GPU format
+    // (see VertexPacking.h); it is drawn by VS_ExPacked (color) / the packed alpha depth-shadow path.
+    {
+        std::vector<ExVertexStructGPU> packed = VertexPacking::Pack( wrappedVertices.data(), wrappedVertices.size() );
+        wmi->MeshVertexBuffer->Init( packed.data(), static_cast<unsigned int>(packed.size() * sizeof( ExVertexStructGPU )), D3D11VertexBuffer::B_VERTEXBUFFER, D3D11VertexBuffer::U_IMMUTABLE );
+    }
     wmi->MeshIndexBuffer->Init( &wrappedIndices[0], wrappedIndices.size() * sizeof( unsigned int ), D3D11VertexBuffer::B_INDEXBUFFER, D3D11VertexBuffer::U_IMMUTABLE );
     wmi->MeshShadowIndexBuffer->Init( &wrappedShadowIndices[0], wrappedShadowIndices.size() * sizeof( unsigned int ), D3D11VertexBuffer::B_INDEXBUFFER, D3D11VertexBuffer::U_IMMUTABLE );
+
+    // Position-only companion stream for opaque depth/shadow passes (same ordering as above).
+    BuildWrappedPositionBuffer( wmi, wrappedVertices );
 
     *outWrappedMesh = wmi;
 
@@ -769,9 +995,9 @@ void WorldConverter::GenerateFullSectionMesh( WorldMeshSectionInfo& section ) {
 
         for ( unsigned int i = 0; i < it.second->Indices.size(); i += 3 ) {
             // Push all triangles
-            vx.emplace_back( it.second->Vertices[it.second->Indices[i]] );
-            vx.emplace_back( it.second->Vertices[it.second->Indices[i + 1]] );
-            vx.emplace_back( it.second->Vertices[it.second->Indices[i + 2]] );
+            vx.emplace_back( it.second->Vertices[it.second->Indices[i]].Position );
+            vx.emplace_back( it.second->Vertices[it.second->Indices[i + 1]].Position );
+            vx.emplace_back( it.second->Vertices[it.second->Indices[i + 2]].Position );
         }
     }
 
@@ -818,7 +1044,7 @@ void WorldConverter::GenerateFullSectionMesh( WorldMeshSectionInfo& section ) {
     section.FullStaticMesh->Vertices = std::move( vx );
 
     // Create the buffers
-    Engine::GraphicsEngine->CreateVertexBuffer( &section.FullStaticMesh->MeshVertexBuffer );
+    Engine::GraphicsEngine->CreateVertexBuffer( section.FullStaticMesh->MeshVertexBuffer );
 
     // Init and fill them
     section.FullStaticMesh->MeshVertexBuffer->Init( &section.FullStaticMesh->Vertices[0], section.FullStaticMesh->Vertices.size() * sizeof( ExVertexStruct ), D3D11VertexBuffer::B_VERTEXBUFFER, D3D11VertexBuffer::U_IMMUTABLE );
@@ -882,7 +1108,6 @@ void WorldConverter::Extract3DSMeshFromVisual( zCProgMeshProto* visual, MeshVisu
     std::vector<ExVertexStruct> vertices;
 
     // Get the data out for all submeshes
-    vertices.clear();
     visual->ConstructVertexBuffer( &vertices );
 
     // This visual can hold multiple submeshes, each with it's own indices
@@ -891,33 +1116,40 @@ void WorldConverter::Extract3DSMeshFromVisual( zCProgMeshProto* visual, MeshVisu
 
         // Get the data from the indices
         for ( int n = 0; n < m->WedgeList.NumInArray; n++ ) {
-            int idx = m->WedgeList.Get( n ).position;
+            const auto& wedge = m->WedgeList.Get( n );
+            int idx = wedge.position;
 
-            vertices[idx].TexCoord.x = m->WedgeList.Get( n ).texUV.x; // This produces wrong results
-            vertices[idx].TexCoord.y = m->WedgeList.Get( n ).texUV.y;
+            vertices[idx].TexCoord.x = wedge.texUV.x; // This produces wrong results
+            vertices[idx].TexCoord.y = wedge.texUV.y;
             vertices[idx].Color = 0xFFFFFFFF;
-            *vertices[idx].Normal.toXMFLOAT3() = (*m->WedgeList.Get( n ).normal.toXMFLOAT3());
+            vertices[idx].Normal = wedge.normal;
         }
 
         // Get indices
         std::vector<VERTEX_INDEX> indices;
+        indices.reserve( m->TriList.NumInArray * 3 );
         for ( int n = 0; n < m->TriList.NumInArray; n++ ) {
-            indices.emplace_back( m->WedgeList.Get( m->TriList.Get( n ).wedge[0] ).position );
-            indices.emplace_back( m->WedgeList.Get( m->TriList.Get( n ).wedge[1] ).position );
-            indices.emplace_back( m->WedgeList.Get( m->TriList.Get( n ).wedge[2] ).position );
+            const auto& triWedge = m->TriList.Get( n ).wedge;
+            indices.emplace_back( m->WedgeList.Get( triWedge[0] ).position );
+            indices.emplace_back( m->WedgeList.Get( triWedge[1] ).position );
+            indices.emplace_back( m->WedgeList.Get( triWedge[2] ).position );
         }
+
+        RepairZeroLengthVertexNormals( vertices, indices );
 
         zCMaterial* mat = m->Material;
 
         MeshInfo* mi = new MeshInfo;
 
+        // WTF. These meshes all have incrementally MORE vertices the further this goes.
+        // all meshes share the same vertex-vector
         mi->Vertices = vertices;
-        mi->Indices = indices;
+        mi->Indices = std::move(indices);
         mi->meshId = s_MeshManager->RecordMesh( m );
 
         // Create the buffers
-        Engine::GraphicsEngine->CreateVertexBuffer( &mi->MeshVertexBuffer );
-        Engine::GraphicsEngine->CreateVertexBuffer( &mi->MeshIndexBuffer );
+        Engine::GraphicsEngine->CreateVertexBuffer( mi->MeshVertexBuffer );
+        Engine::GraphicsEngine->CreateVertexBuffer( mi->MeshIndexBuffer );
 
         // Optimize static submesh ordering for better cache and vertex fetch locality.
         mi->MeshVertexBuffer->OptimizeFaces( mi->Indices.data(),
@@ -963,7 +1195,7 @@ void WorldConverter::ExtractSkeletalMeshFromVob( zCModel* model, SkeletalMeshVis
             int numNodes = *reinterpret_cast<int*>(stream);
             stream += 4;
 
-            ExSkelVertexStruct vx;
+            ExSkelVertexStruct& vx = posList.emplace_back();
             //vx.Position = s->GetPositionList()->Array[i];
             vx.Normal = float3( 0, 0, 0 );
             ZeroMemory( vx.weights, sizeof( vx.weights ) );
@@ -976,7 +1208,7 @@ void WorldConverter::ExtractSkeletalMeshFromVob( zCModel* model, SkeletalMeshVis
                 stream += sizeof( zTWeightEntry );
 
                 //if (s->GetNormalsList() && i < s->GetNormalsList()->NumInArray)
-                //	(*vx.Normal.toMFLOAT3()) += weightEntry.Weight * (*s->GetNormalsList()->Array[i].toXMFLOAT3());
+                //	(*vx.Normal.toMFLOAT3()) += weightEntry.Weight * (*s->GetNormalsList()->Array[i]);
 
                 // Get index and weight
                 if ( n < 4 ) {
@@ -992,8 +1224,6 @@ void WorldConverter::ExtractSkeletalMeshFromVob( zCModel* model, SkeletalMeshVis
                     vx.Position[n][2] = halfs[2];
                 }
             }
-
-            posList.emplace_back( vx );
         }
 
         // The rest is the same as a zCProgMeshProto, but with a different vertex type
@@ -1033,8 +1263,7 @@ void WorldConverter::ExtractSkeletalMeshFromVob( zCModel* model, SkeletalMeshVis
                 vx.TexCoord = wedge.texUV;
 
                 // Save vertexpos in bind pose, to run PNAEN on it
-                bindPoseVertices.emplace_back();
-                ExVertexStruct& pvx = bindPoseVertices.back();
+                ExVertexStruct& pvx = bindPoseVertices.emplace_back();
                 pvx.Position = s->GetPositionList()->Array[wedge.position];
                 pvx.Normal = vx.Normal;
                 pvx.TexCoord = vx.TexCoord;
@@ -1050,8 +1279,8 @@ void WorldConverter::ExtractSkeletalMeshFromVob( zCModel* model, SkeletalMeshVis
             mi->meshId = s_MeshManager->RecordMesh( m );
 
             // Create the buffers
-            Engine::GraphicsEngine->CreateVertexBuffer( &mi->MeshVertexBuffer );
-            Engine::GraphicsEngine->CreateVertexBuffer( &mi->MeshIndexBuffer );
+            Engine::GraphicsEngine->CreateVertexBuffer( mi->MeshVertexBuffer );
+            Engine::GraphicsEngine->CreateVertexBuffer( mi->MeshIndexBuffer );
 
             // Init and fill it
             mi->MeshVertexBuffer->Init( &mi->Vertices[0], mi->Vertices.size() * sizeof( ExSkelVertexStruct ), D3D11VertexBuffer::B_VERTEXBUFFER, D3D11VertexBuffer::U_IMMUTABLE );
@@ -1061,8 +1290,8 @@ void WorldConverter::ExtractSkeletalMeshFromVob( zCModel* model, SkeletalMeshVis
             bmi->Indices = mi->Indices; // copy them
             bmi->Vertices = std::move(bindPoseVertices);
 
-            Engine::GraphicsEngine->CreateVertexBuffer( &bmi->MeshVertexBuffer );
-            Engine::GraphicsEngine->CreateVertexBuffer( &bmi->MeshIndexBuffer );
+            Engine::GraphicsEngine->CreateVertexBuffer( bmi->MeshVertexBuffer );
+            Engine::GraphicsEngine->CreateVertexBuffer( bmi->MeshIndexBuffer );
 
             bmi->MeshVertexBuffer->Init( &bmi->Vertices[0], bmi->Vertices.size() * sizeof( ExVertexStruct ), D3D11VertexBuffer::B_VERTEXBUFFER, D3D11VertexBuffer::U_IMMUTABLE );
             bmi->MeshIndexBuffer->Init( &bmi->Indices[0], bmi->Indices.size() * sizeof( VERTEX_INDEX ), D3D11VertexBuffer::B_INDEXBUFFER, D3D11VertexBuffer::U_IMMUTABLE );
@@ -1110,7 +1339,7 @@ void WorldConverter::ExtractProgMeshProtoFromModel( zCModel* model, MeshVisualIn
         if ( isMMS ) {
             visual = reinterpret_cast<zCMorphMesh*>(node->NodeVisual)->GetMorphMesh();
         }
-        XMFLOAT3* posList = visual->GetPositionList()->Array->toXMFLOAT3();
+        XMFLOAT3* posList = visual->GetPositionList()->Array;
 
         // Calculate transform for this node
         zCModelNodeInst* parent = node->ParentNode;
@@ -1145,7 +1374,7 @@ void WorldConverter::ExtractProgMeshProtoFromModel( zCModel* model, MeshVisualIn
                 vertices.emplace_back();
 
                 ExVertexStruct& vx = vertices.back();
-                XMStoreFloat3( vx.Position.toXMFLOAT3(), XMVector3TransformCoord( XMLoadFloat3( &posList[wedge.position] ), XMMatrixTranspose( XMLoadFloat4x4( &node->TrafoObjToCam ) ) ) );
+                XMStoreFloat3( &vx.Position, XMVector3TransformCoord( XMLoadFloat3( &posList[wedge.position] ), XMMatrixTranspose( XMLoadFloat4x4( &node->TrafoObjToCam ) ) ) );
                 vx.TexCoord = wedge.texUV;
                 vx.Normal = wedge.normal;
                 vx.Color = 0xFFFFFFFF;
@@ -1158,6 +1387,8 @@ void WorldConverter::ExtractProgMeshProtoFromModel( zCModel* model, MeshVisualIn
                 continue;
             }
 
+            RepairZeroLengthVertexNormals( vertices, indices );
+
             // Create the buffers and sort the mesh into the structure
             MeshInfo* mi = new MeshInfo;
             mi->Vertices = vertices;
@@ -1165,8 +1396,8 @@ void WorldConverter::ExtractProgMeshProtoFromModel( zCModel* model, MeshVisualIn
             mi->meshId = s_MeshManager->RecordMesh( m );
 
             // Create the buffers
-            Engine::GraphicsEngine->CreateVertexBuffer( &mi->MeshVertexBuffer );
-            Engine::GraphicsEngine->CreateVertexBuffer( &mi->MeshIndexBuffer );
+            Engine::GraphicsEngine->CreateVertexBuffer( mi->MeshVertexBuffer );
+            Engine::GraphicsEngine->CreateVertexBuffer( mi->MeshIndexBuffer );
 
             // Optimize faces
             mi->MeshVertexBuffer->OptimizeFaces( &mi->Indices[0],
@@ -1197,7 +1428,7 @@ void WorldConverter::ExtractProgMeshProtoFromModel( zCModel* model, MeshVisualIn
             MeshKey key;
             key.Material = mat;
             key.Texture = mat->GetTextureSingle();
-            key.Info = Engine::GAPI->GetMaterialInfoFrom( key.Texture );
+            key.Info = Engine::GAPI->GetMaterialInfoFrom( mat );
 
             meshInfo->MeshesByTexture[key].emplace_back( mi );
             if (key.Texture && key.Texture->HasAlphaChannel()) {
@@ -1225,8 +1456,8 @@ void WorldConverter::ExtractProgMeshProtoFromModel( zCModel* model, MeshVisualIn
         }
 
         MeshInfo* wmi = new MeshInfo;
-        Engine::GraphicsEngine->CreateVertexBuffer( &wmi->MeshVertexBuffer );
-        Engine::GraphicsEngine->CreateVertexBuffer( &wmi->MeshIndexBuffer );
+        Engine::GraphicsEngine->CreateVertexBuffer( wmi->MeshVertexBuffer );
+        Engine::GraphicsEngine->CreateVertexBuffer( wmi->MeshIndexBuffer );
 
         // Init and fill them
         wmi->MeshVertexBuffer->Init( &wrappedVertices[0], wrappedVertices.size() * sizeof( ExVertexStruct ), D3D11VertexBuffer::B_VERTEXBUFFER, D3D11VertexBuffer::U_IMMUTABLE );
@@ -1268,17 +1499,19 @@ void WorldConverter::ExtractProgMeshProtoFromMesh( zCMesh* mesh, MeshVisualInfo*
 
     for ( int i = 0; i < numPolys; i++ ) {
         zCPolygon* poly = polys[i];
+        zCVertex** const polyVerticies = poly->getVertices();
+        zCVertFeature** const polyFeatures = poly->getFeatures();
 
         // Extract poly vertices
         polyVertices.clear();
-        polyVertices.reserve( poly->GetNumPolyVertices() );
+        const auto numPolyVeritcies = poly->GetNumPolyVertices();
+        polyVertices.reserve( numPolyVeritcies );
 
-        for ( int v = 0; v < poly->GetNumPolyVertices(); v++ ) {
-            zCVertex* vertex = poly->getVertices()[v];
-            zCVertFeature* feature = poly->getFeatures()[v];
+        for ( int v = 0; v < numPolyVeritcies; v++ ) {
+            const zCVertex* vertex = polyVerticies[v];
+            const zCVertFeature* feature = poly->getFeatures()[v];
 
-            polyVertices.emplace_back();
-            ExVertexStruct& t = polyVertices.back();
+            ExVertexStruct& t = polyVertices.emplace_back();
             t.Position = vertex->Position;
             t.TexCoord = feature->texCoord;
             t.Normal = feature->normal;
@@ -1294,13 +1527,15 @@ void WorldConverter::ExtractProgMeshProtoFromMesh( zCMesh* mesh, MeshVisualInfo*
         indices.push_back( i );
     }
 
+    RepairZeroLengthVertexNormals( vertices, indices );
+
     MeshInfo* mi = new MeshInfo;
     mi->Vertices = std::move(vertices);
     mi->Indices = std::move(indices);
 
     // Create the buffers
-    Engine::GraphicsEngine->CreateVertexBuffer( &mi->MeshVertexBuffer );
-    Engine::GraphicsEngine->CreateVertexBuffer( &mi->MeshIndexBuffer );
+    Engine::GraphicsEngine->CreateVertexBuffer( mi->MeshVertexBuffer );
+    Engine::GraphicsEngine->CreateVertexBuffer( mi->MeshIndexBuffer );
 
     // Optimize static mesh ordering for better cache and vertex fetch locality.
     mi->MeshVertexBuffer->OptimizeFaces( mi->Indices.data(),
@@ -1389,16 +1624,17 @@ void WorldConverter::UpdateMorphMeshVisual( void* v, MeshVisualInfo* meshInfo ) 
     if ( !morphMesh )
         return;
 
-    XMFLOAT3* posList = morphMesh->GetPositionList()->Array->toXMFLOAT3();
+    float3* posList = morphMesh->GetPositionList()->Array;
+    static std::vector<ExVertexStruct> vertices;
     for ( int i = 0; i < morphMesh->GetNumSubmeshes(); i++ ) {
-        std::vector<ExVertexStruct> vertices;
+        vertices.clear();
 
         zCSubMesh* s = morphMesh->GetSubmesh( i );
         vertices.reserve( s->WedgeList.NumInArray );
         for ( int v = 0; v < s->WedgeList.NumInArray; v++ ) {
             zTPMWedge& wedge = s->WedgeList.Array[v];
-            vertices.emplace_back();
-            ExVertexStruct& vx = vertices.back();
+
+            ExVertexStruct& vx = vertices.emplace_back();
             vx.Position = posList[wedge.position];
             vx.Normal = wedge.normal;
             vx.TexCoord = wedge.texUV;
@@ -1406,7 +1642,7 @@ void WorldConverter::UpdateMorphMeshVisual( void* v, MeshVisualInfo* meshInfo ) 
         }
 
         for ( auto const& it : meshInfo->Meshes ) {
-            for ( MeshInfo* mi : it.second ) {
+            for ( auto& mi : it.second ) {
                 if ( mi->MeshIndex == i ) {
                     mi->MeshVertexBuffer->UpdateBuffer( &vertices[0], vertices.size() * sizeof( ExVertexStruct ) );
                     goto Out_Of_Nested_Loop;
@@ -1424,7 +1660,7 @@ void WorldConverter::Extract3DSMeshFromVisual2( zCProgMeshProto* visual, MeshVis
     XMFLOAT3 bbmin = XMFLOAT3( FLT_MAX, FLT_MAX, FLT_MAX );
     XMFLOAT3 bbmax = XMFLOAT3( -FLT_MAX, -FLT_MAX, -FLT_MAX );
 
-    XMFLOAT3* posList = visual->GetPositionList()->Array->toXMFLOAT3();
+    float3* posList = visual->GetPositionList()->Array;
 
     std::list<std::vector<ExVertexStruct>*> vertexBuffers;
     std::list<std::vector<VERTEX_INDEX>*> indexBuffers;
@@ -1433,7 +1669,8 @@ void WorldConverter::Extract3DSMeshFromVisual2( zCProgMeshProto* visual, MeshVis
     // Construct unindexed mesh
     std::vector<ExVertexStruct> vertices;
     std::vector<VERTEX_INDEX> indices;
-    for ( int i = 0; i < visual->GetNumSubmeshes(); i++ ) {
+    const auto numSubmeshes = visual->GetNumSubmeshes();
+    for ( int i = 0; i < numSubmeshes; i++ ) {
         zCSubMesh* s = visual->GetSubmesh( i );
         vertices.clear();
         indices.clear();
@@ -1476,6 +1713,8 @@ void WorldConverter::Extract3DSMeshFromVisual2( zCProgMeshProto* visual, MeshVis
             continue;
         }
 
+        RepairZeroLengthVertexNormals( vertices, indices );
+
         // Create the buffers and sort the mesh into the structure
         MeshInfo* mi = new MeshInfo;
         mi->Vertices = std::move( vertices );
@@ -1484,8 +1723,8 @@ void WorldConverter::Extract3DSMeshFromVisual2( zCProgMeshProto* visual, MeshVis
         mi->meshId = s_MeshManager->RecordMesh( s );
 
         // Create the buffers
-        Engine::GraphicsEngine->CreateVertexBuffer( &mi->MeshVertexBuffer );
-        Engine::GraphicsEngine->CreateVertexBuffer( &mi->MeshIndexBuffer );
+        Engine::GraphicsEngine->CreateVertexBuffer( mi->MeshVertexBuffer );
+        Engine::GraphicsEngine->CreateVertexBuffer( mi->MeshIndexBuffer );
 
         if ( meshInfo->MorphMeshVisual ) {
             // We need to keep original indices so that we can reuse them(we can't optimize them)
@@ -1524,7 +1763,7 @@ void WorldConverter::Extract3DSMeshFromVisual2( zCProgMeshProto* visual, MeshVis
         MeshKey key;
         key.Material = mat;
         key.Texture = mat->GetTextureSingle();
-        key.Info = Engine::GAPI->GetMaterialInfoFrom( key.Texture );
+        key.Info = Engine::GAPI->GetMaterialInfoFrom( mat );
 
         meshInfo->MeshesByTexture[key].emplace_back( mi );
         if (key.Texture && key.Texture->HasAlphaChannel()) {
@@ -1553,8 +1792,8 @@ void WorldConverter::Extract3DSMeshFromVisual2( zCProgMeshProto* visual, MeshVis
         }
 
         MeshInfo* wmi = new MeshInfo;
-        Engine::GraphicsEngine->CreateVertexBuffer( &wmi->MeshVertexBuffer );
-        Engine::GraphicsEngine->CreateVertexBuffer( &wmi->MeshIndexBuffer );
+        Engine::GraphicsEngine->CreateVertexBuffer( wmi->MeshVertexBuffer );
+        Engine::GraphicsEngine->CreateVertexBuffer( wmi->MeshIndexBuffer );
 
         // Init and fill them
         wmi->MeshVertexBuffer->Init( &wrappedVertices[0], wrappedVertices.size() * sizeof( ExVertexStruct ), D3D11VertexBuffer::B_VERTEXBUFFER, D3D11VertexBuffer::U_IMMUTABLE );
@@ -1660,13 +1899,25 @@ void WorldConverter::GenerateVertexNormals( std::vector<ExVertexStruct>& vertice
     std::vector<XMFLOAT3> normals( vertices.size(), XMFLOAT3( 0, 0, 0 ) );
 
     for ( unsigned int i = 0; i < indices.size(); i += 3 ) {
-        XMFLOAT3 v[3] = { *vertices[indices[i]].Position.toXMFLOAT3(), *vertices[indices[i + 1]].Position.toXMFLOAT3(), *vertices[indices[i + 2]].Position.toXMFLOAT3() };
+        XMFLOAT3 v[3] = { vertices[indices[i]].Position, vertices[indices[i + 1]].Position, vertices[indices[i + 2]].Position };
         FXMVECTOR normal = XMVector3Cross( (XMLoadFloat3( &v[1] ) - XMLoadFloat3( &v[0] )), (XMLoadFloat3( &v[2] ) - XMLoadFloat3( &v[0] )) );
 
         for ( int j = 0; j < 3; ++j ) {
-            FXMVECTOR a = XMLoadFloat3( &v[(j + 1) % 3] ) - XMLoadFloat3( &v[j] );
-            FXMVECTOR b = XMLoadFloat3( &v[(j + 2) % 3] ) - XMLoadFloat3( &v[j] );
-            FXMVECTOR weight = XMVectorACos( XMVector3Dot( a, b ) / (XMVector3Length( a ) * XMVector3Length( b )) );
+            XMVECTOR a = XMLoadFloat3( &v[(j + 1) % 3] ) - XMLoadFloat3( &v[j] );
+            XMVECTOR b = XMLoadFloat3( &v[(j + 2) % 3] ) - XMLoadFloat3( &v[j] );
+            float lenA = XMVectorGetX( XMVector3Length( a ) );
+            float lenB = XMVectorGetX( XMVector3Length( b ) );
+
+            // Degenerate edge (duplicate/collapsed vertices): dividing by a
+            // zero length turns the ACos argument into NaN, which then
+            // poisons this vertex's accumulated normal (and every other
+            // triangle sharing it, since they add into the same slot).
+            // Skip the contribution instead.
+            if ( lenA <= 1e-8f || lenB <= 1e-8f )
+                continue;
+
+            float cosAngle = std::clamp( XMVectorGetX( XMVector3Dot( a, b ) ) / (lenA * lenB), -1.0f, 1.0f );
+            XMVECTOR weight = XMVectorReplicate( acosf( cosAngle ) );
             XMVECTOR XMV_normals_indices = XMLoadFloat3( &normals[indices[(i + j)]] );
             XMV_normals_indices += weight * normal;
             XMStoreFloat3( &normals[indices[(i + j)]], XMV_normals_indices );
@@ -1676,7 +1927,12 @@ void WorldConverter::GenerateVertexNormals( std::vector<ExVertexStruct>& vertice
     // Normalize everything and store it into the vertices
     XMFLOAT3 Normal;
     for ( unsigned int i = 0; i < normals.size(); i++ ) {
-        XMStoreFloat3( &Normal, XMVector3Normalize( XMLoadFloat3( &normals[i] ) ) );
+        XMVECTOR n = XMLoadFloat3( &normals[i] );
+        // Isolated vertex or all contributing triangles were degenerate:
+        // fall back to a safe default instead of normalizing a zero vector into NaN.
+        if ( XMVectorGetX( XMVector3LengthSq( n ) ) <= 1e-12f )
+            n = XMVectorSet( 0.0f, 1.0f, 0.0f, 0.0f );
+        XMStoreFloat3( &Normal, XMVector3Normalize( n ) );
         vertices[i].Normal = Normal;
     }
 }
@@ -1730,7 +1986,7 @@ void WorldConverter::WrapVertexBuffers( const std::list<std::vector<ExVertexStru
 void WorldConverter::CacheMesh( const std::map<std::string, std::vector<std::pair<std::vector<ExVertexStruct>, std::vector<VERTEX_INDEX>>>> geometry, const std::string& file ) {
     FILE* f = fopen( file.c_str(), "wb" );
     // Write version
-    int Version = 1;
+    int Version = MESH_CACHE_VERSION;
     fwrite( &Version, sizeof( Version ), 1, f );
 
     // Write num textures
@@ -1813,9 +2069,7 @@ void WorldConverter::UpdateQuadMarkInfo( QuadMarkInfo* info, zCQuadMark* mark, c
         return;
 
     info->Mesh.reset();
-    D3D11VertexBuffer* vb;
-    Engine::GraphicsEngine->CreateVertexBuffer( &vb );
-    info->Mesh.reset( vb );
+    Engine::GraphicsEngine->CreateVertexBuffer( info->Mesh );
 
     // Init and fill it
     info->Mesh->Init( &quadVertices[0], quadVertices.size() * sizeof( ExVertexStruct ) );

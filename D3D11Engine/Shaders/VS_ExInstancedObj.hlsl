@@ -61,7 +61,8 @@ struct VS_OUTPUT
     float3 vViewPosition    : TEXCOORD5;
     float4 vCurrClipPos     : TEXCOORD6;  // Current clip position for velocity
     float4 vPrevClipPos     : TEXCOORD7;  // Previous clip position for velocity
-    
+    float4 vTangent         : TEXCOORD3;  // no precomputed tangent -> zero (PS falls back to ddx/ddy)
+
     float4 vPosition        : SV_POSITION;
 };
 
@@ -141,8 +142,12 @@ float3 CalculatePlayerInfluence(
     
     float3 vertexWorldPos = mul(float4(vertexLocalPos, 1.0), instWorldMatrix).xyz;
     float3 toVertex = vertexWorldPos - playerPos;
-    
-    float3 displaceDirWorld = lerp(float3(0, 1, 0), normalize(toVertex), step(0.001, length(toVertex)));
+
+    // Branch instead of lerp: normalize(toVertex) is Inf/NaN when toVertex is ~0
+    // (vertex on top of the player), and lerp(a, NaN, 0) still evaluates to NaN
+    // since 0 * NaN = NaN in IEEE float, not 0.
+    float toVertexLen = length(toVertex);
+    float3 displaceDirWorld = toVertexLen >= 0.001 ? (toVertex / toVertexLen) : float3(0, 1, 0);
     
     float distanceXZ = length(toVertex.xz);
     float distanceFactor = exp(-(distanceXZ*distanceXZ)/(1.8*heroAffectRange*heroAffectRange));
@@ -226,7 +231,8 @@ VS_OUTPUT VSMain( VS_INPUT Input )
     // Use UNJITTERED matrices for correct velocity (jitter would cause incorrect motion)
     Output.vCurrClipPos = mul(float4(worldPos, 1.0), frame.M_UnjitteredViewProj);
     Output.vPrevClipPos = mul(float4(prevWorldPos, 1.0), frame.M_PrevViewProj);
-    
+    Output.vTangent = float4(0,0,0,0);
+
     return Output;
 }
 

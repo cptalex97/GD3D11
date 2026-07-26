@@ -12,6 +12,10 @@ const int GSWITCH_ALPHAREF = 2;
 const int GSWITCH_LIGHING = 4;
 const int GSWITCH_REFLECTIONS = 8;
 const int GSWITCH_LINEAR_DEPTH = 16;
+// Forward+ with hardware MSAA active: alpha-tested pixel shaders sharpen their alpha test into a
+// per-pixel coverage value instead of a hard binary clip, so the MSAA alpha-to-coverage blend mode
+// can dither an anti-aliased cutout edge across subsamples.
+const int GSWITCH_MSAA_ALPHATOCOVERAGE = 32;
 
 enum RenderStage {
     STAGE_DRAW_UNKNOWN = 0,
@@ -150,18 +154,6 @@ __declspec(align(4)) struct GothicPipelineState {
 };
 
 struct GothicPipelineKeyHasher {
-    static const size_t bucket_size = 10; // mean bucket size that the container should try not to exceed
-    static const size_t min_buckets = (1 << 10); // minimum number of buckets, power of 2, >0
-
-    static std::size_t hash_value( float value ) {
-        std::hash<float> hasher;
-        return hasher( value );
-    }
-
-    static void hash_combine( std::size_t& seed, float value ) {
-        seed ^= hash_value( value ) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-    }
-
     std::size_t operator()( const GothicPipelineState& k ) const {
         return k.Hash;
     }
@@ -611,6 +603,13 @@ struct GothicRendererSettings {
         RM_ForwardPlus = 1,
     };
 
+    enum E_WaterSSRQuality {
+        WATER_SSR_DISABLED = 0,
+        WATER_SSR_LOW      = 1,
+        WATER_SSR_MEDIUM   = 2,
+        WATER_SSR_HIGH     = 3,
+    };
+
     enum class TX_QUALITY : uint16_t {
         VeryLow = 128,
         Low = 256,
@@ -715,6 +714,9 @@ struct GothicRendererSettings {
         PCSSLightSize = 0.140f; // Shadow-UV light radius used by PCSS blocker search
 
         BloomStrength = 1.0f;
+        EnableBloom = false;
+        BloomKnee = 0.5f;
+        BloomRadius = 1.0f;
         GlobalWindStrength = 1.0f;
         VegetationAlphaToCoverage = true;
 
@@ -738,6 +740,7 @@ struct GothicRendererSettings {
         PartialDynamicShadowUpdates = true;
         EnableTiledLighting = false;
         RendererMode = RM_Deferred;
+        MSAASamples = 1;
         DrawSectionIntersections = true;
 
         EnableGodRays = true;
@@ -789,7 +792,8 @@ struct GothicRendererSettings {
         //DisableEverything();
 
         LimitLightIntesity = false;
-        AllowNormalmaps = false;
+        AllowNormalmaps = 0;
+        CompressedNormalsSupport = true;
 
         AllowNumpadKeys = false;
         EnableDebugLog = true;
@@ -811,8 +815,11 @@ struct GothicRendererSettings {
         RunInSpacerNet = false;
         BinkVideoRunning = false;
         EnableWaterAnimation = false;
+        WaterSSRQuality = WATER_SSR_MEDIUM;
 
         GraphicsPreset = E_GraphicsPreset::GRAPHICS_CUSTOM;
+        AllowSelfShadowingPointlights = false;
+        
         ApplyAssaoPreset(1);
 
         ResetDebugSettings();
@@ -867,6 +874,7 @@ struct GothicRendererSettings {
         DebugSettings.FeatureSet.EnableDriverExtensions = true;
         DebugSettings.FeatureSet.UseWorldSectionBVH = true;
         DebugSettings.FeatureSet.UseScreenSpaceShadowMask = false;
+        DebugSettings.FeatureSet.GenerateAONormalsFromDepth = true;
     }
 
     void SetupOldWorldSpecificValues() {
@@ -943,6 +951,8 @@ struct GothicRendererSettings {
     bool PartialDynamicShadowUpdates;
     bool EnableTiledLighting;
     E_RendererMode RendererMode;
+    /** Hardware MSAA sample count (1/2/4/8). Only applied by the Forward+ renderer; Deferred always stays single-sample. */
+    int MSAASamples;
     bool DrawSectionIntersections;
 
     int MaxNumFaces;
@@ -980,6 +990,9 @@ struct GothicRendererSettings {
     float HDRMiddleGray;
     float BloomThreshold;
     float BloomStrength;
+    bool EnableBloom;
+    float BloomKnee;
+    float BloomRadius;
     float GothicUIScale;
     float FOVHoriz;
     float FOVVert;
@@ -1026,7 +1039,7 @@ struct GothicRendererSettings {
     bool EnableRainEffects;
 
     bool LimitLightIntesity;
-    bool AllowNormalmaps;
+    int AllowNormalmaps;
 
     bool AllowNumpadKeys;
     bool EnableDebugLog;
@@ -1047,9 +1060,12 @@ struct GothicRendererSettings {
     bool RunInSpacerNet;
     bool BinkVideoRunning;
     bool EnableWaterAnimation;
+    E_WaterSSRQuality WaterSSRQuality;
     E_AntiAliasingMode AntiAliasingMode;
     E_SharpeningMode SharpeningMode;
     E_GraphicsPreset GraphicsPreset;
+    bool CompressedNormalsSupport;
+    bool AllowSelfShadowingPointlights;
     
     struct {
         struct {
@@ -1076,6 +1092,7 @@ struct GothicRendererSettings {
             bool UseLayeredRendering;
             bool UseShadowAtlas;
             bool UseScreenSpaceShadowMask;
+            bool GenerateAONormalsFromDepth; // Forward+: build smooth normals from depth for SAO/ASSAO
             bool ForceFeatureLevel10;
         } FeatureSet;
     } DebugSettings;

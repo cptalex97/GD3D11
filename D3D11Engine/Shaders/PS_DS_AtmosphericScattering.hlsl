@@ -20,7 +20,10 @@ cbuffer DS_ScreenQuadConstantBuffer : register(b0)
 	
     float3 SQ_LightDirectionVS;
     float SQ_ShadowmapSize;
-	
+
+    float3 SQ_LightDirectionWS;
+    float SQ_Pad0;
+
     float4 SQ_LightColor;
     matrix SQ_ShadowViewProj[MAX_CSM_CASCADES];
 	
@@ -59,6 +62,8 @@ TextureCube TX_ReflectionCube : register(t5);
 Texture2D TX_Distortion : register(t6);
 Texture2D TX_SI_SP : register(t7);
 Texture2D TX_ShadowBlueNoise : register(t8);
+// Screen-space AO mask (R8). Applied to indirect/ambient light only. White = no occlusion.
+Texture2D TX_AO : register(t9);
 
 #include "ShadowSampling.h"
 
@@ -276,9 +281,10 @@ float4 PSMain(PS_INPUT Input) : SV_TARGET
 	// CSM: Use soft cascaded shadow map with configurable softness
     float3 wsNormal = normalize(mul(float4(normal, 0.0f), SQ_InvView).xyz);
 
+    [branch]
     if(AC_LightPos.y > 0) // only get shadow value if it isn't night-time
 	{
-        float3 wsLightDirection = normalize(mul(float4(SQ_LightDirectionVS, 0.0f), SQ_InvView).xyz);
+        float3 wsLightDirection = SQ_LightDirectionWS;
 
 		float rawNoL = dot(wsNormal, wsLightDirection);
 
@@ -328,6 +334,10 @@ float4 PSMain(PS_INPUT Input) : SV_TARGET
 	float vertAO = lerp(vl * vl, 1.0f, 0.5f);
 
     float sun = saturate(dot(normalize(SQ_LightDirectionVS), normal) * shadow) * 1.0f;
+    
+    // Screen-space AO: applied to indirect/ambient light only (not direct sun),
+    // so it doesn't produce deep shadows on ground/objects that are lit strongly by the sun.
+    float ssao = TX_AO.Sample(SS_Linear, uv).r;
 
     spec = pow(spec, specPower) * specIntensity;
     float3 specBare = spec * lightColor.rgb * sun + specWet * lightColor.rgb;
@@ -336,7 +346,7 @@ float4 PSMain(PS_INPUT Input) : SV_TARGET
     float shadowAO = lerp(1.0f, vertLighting, SQ_ShadowAOStrength);
     float worldAO = lerp(1.0f, vertLighting, SQ_WorldAOStrength);
 	
-    float3 litPixel = lerp(diffuse.rgb * SQ_ShadowStrength * sunStrength * shadowAO,
+    float3 litPixel = lerp(diffuse.rgb * SQ_ShadowStrength * sunStrength * shadowAO * ssao,
 							diffuse.rgb * lightColor.rgb * lightColor.a * worldAO, sun)
 				  + specColored;
 	

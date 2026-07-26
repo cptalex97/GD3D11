@@ -249,7 +249,7 @@ XRESULT D3D11TiledDeferredShading::DrawPointlightLights(
         shadeCB.NumTilesX = numTilesX;
         XMStoreFloat4x4( &shadeCB.InvView, XMMatrixInverse( nullptr, viewRaw ) );
 
-        csTiledShading->GetBuffer( "TiledShadingConstantBuffer" ).Update( &shadeCB ).Bind();
+        csTiledShading->UpdateBuffer("TiledShadingConstantBuffer", &shadeCB, sizeof(shadeCB));
 
         // Bind GBuffer SRVs to CS
         context->CSSetShaderResources( 0, 1, color.GetShaderResView().GetAddressOf() );
@@ -368,7 +368,7 @@ D3D11TiledDeferredShading::CullResult D3D11TiledDeferredShading::CullLights(
 
         // Distance fade
         float dist;
-        XMStoreFloat( &dist, XMVector3Length( XMLoadFloat3( posWorld.toXMFLOAT3() ) - camPos ) );
+        XMStoreFloat( &dist, XMVector3Length( XMLoadFloat3( &posWorld ) - camPos ) );
 
         if ( dist + lightRange < settings.VisualFXDrawRadius ) {
             float fadeEnd = settings.VisualFXDrawRadius;
@@ -386,14 +386,14 @@ D3D11TiledDeferredShading::CullResult D3D11TiledDeferredShading::CullLights(
         if ( lightColor.x <= 0.0f && lightColor.y <= 0.0f && lightColor.z <= 0.0f )
             continue;
 
-        FXMVECTOR posWorldVec = XMLoadFloat3( posWorld.toXMFLOAT3() );
+        FXMVECTOR posWorldVec = XMLoadFloat3( &posWorld );
         XMFLOAT3 posView;
         XMStoreFloat3( &posView, XMVector3TransformCoord( posWorldVec, view ) );
 
         TiledPointLight& tl = lightData[result.TiledLightCount];
         tl.PositionView = posView;
         tl.Range = lightRange;
-        tl.Color = XMFLOAT4( lightColor.x, lightColor.y, lightColor.z, lightColor.w );
+        tl.Color = XMFLOAT4( lightColor.x, lightColor.y, lightColor.z, vob->IsStatic() ? 0.0f : 1.0f );
         tl.PositionWorld = XMFLOAT3( posWorld.x, posWorld.y, posWorld.z );
 
         if ( hasShadow ) {
@@ -421,7 +421,7 @@ D3D11TiledDeferredShading::CullResult D3D11TiledDeferredShading::CullLights(
         cullCB.TotalLights = result.TiledLightCount;
         cullCB.MaxBufferIndices = (numTilesX * numTilesY) * MAX_LIGHTS_PER_TILE;
 
-        csLightCull->GetBuffer( "LightCullingConstantBuffer" ).Update( &cullCB ).Bind();
+        csLightCull->UpdateBuffer("LightCullingConstantBuffer", &cullCB, sizeof(cullCB));
 
         context->CSSetShaderResources( 0, 1, depthCopy.GetShaderResView().GetAddressOf() );
         context->CSSetShaderResources( 1, 1, m_LightBufferSRV.GetAddressOf() );

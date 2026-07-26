@@ -8,10 +8,63 @@
 #include "D3D11PfxRenderer.h"
 #include "zCVobLight.h"
 #include "BaseLineRenderer.h"
+#include "oCVisFX.h"
 #include "WorldConverter.h"
 #include "ThreadPool.h"
 
 const float LIGHT_COLORCHANGE_POS_MOD = 0.1f;
+
+namespace
+{
+    std::unordered_set<const zCVob*> vobsToExclude = {};
+    std::move_only_function<bool(const zCVob*) const> excludeVobsToExclude = []( const zCVob* vob )
+    {
+        return vobsToExclude.contains(vob);
+    };
+    
+    void CollectVobTreeToExclude(const zCVob* vob) {
+        while (vob && vobsToExclude.emplace(vob).second) {
+            if (auto vfx = vob->As<oCVisualFX>()) {
+                if (auto origin = vfx->GetOrigin()) {
+                    vobsToExclude.emplace(origin);
+                    CollectVobTreeToExclude(origin);
+                }
+            }
+        
+            vob = vob->GetVobParent();
+        }
+    }
+}
+
+// This allows us to exclude ourselves from producing shadows.
+// This is needed for example in Returning, where the Belt-Light otherwise
+// draws a huge shadow from the player all around and 
+static void SetupVobsToExclude(const VobLightInfo* LightInfo)
+{
+    if (Engine::GAPI->GetRendererState().RendererSettings.AllowSelfShadowingPointlights) {
+        return;
+    }
+    vobsToExclude.clear();
+    
+    CollectVobTreeToExclude(LightInfo->Vob);
+}
+
+static bool GetHasOriginVob( VobLightInfo* info ) {
+    if ( !info->IsPFXVobLight ) {
+        zCVob* vob = info->Vob;
+        while ( auto parent = vob->GetVobParent() ) {
+            if ( auto visFx = parent->As<oCVisualFX>() ) {
+                if ( auto origin = visFx->GetOrigin(); origin && origin->As<oCItem>() ) {
+                    return true;
+                }
+            } else if ( parent->As<oCItem>() ) {
+                return true;
+            }
+            vob = parent;
+        }
+    }
+    return false;
+}
 
 D3D11PointLight::D3D11PointLight( VobLightInfo* info, bool dynamicLight ) {
     LightInfo = info;
@@ -21,7 +74,7 @@ D3D11PointLight::D3D11PointLight( VobLightInfo* info, bool dynamicLight ) {
     // some lights don't seem to be in here!
     Engine::GAPI->VobLightMap[info->Vob] = info;
 
-    XMStoreFloat3( &LastUpdatePosition, LightInfo->Vob->GetPositionWorldXM() );
+    LastUpdatePosition = LightInfo->Vob->GetPositionWorld();
 
     m_DepthCubemap = nullptr;
     m_StaticDepthCubemap = nullptr;
@@ -50,7 +103,7 @@ D3D11PointLight::~D3D11PointLight() {
     ReleaseShadowMap();
 
     for ( auto& [k, mesh] : WorldMeshCache ) {
-        SAFE_DELETE( mesh );
+        SAFE_DELETE( mesh )
     }
 }
 
@@ -112,7 +165,7 @@ int D3D11PointLight::GetCurrentShadowMode() const {
     auto mode = static_cast<int>(Engine::GAPI->GetRendererState().RendererSettings.EnablePointlightShadows);
     if ( mode > 1 ) {
         if ( LightInfo->Vob->GetLightInfoFlags().isStatic ) {
-            return GothicRendererSettings::EPointLightShadowMode::PLS_STATIC_ONLY; 
+            return GothicRendererSettings::EPointLightShadowMode::PLS_STATIC_ONLY;
         }
     }
     return mode;
@@ -210,8 +263,15 @@ void D3D11PointLight::RenderStaticShadowPass( RenderToDepthStencilBuffer& target
         ? SHADOW_CASTER_WORLD // static light? only draw world mesh.
         : SHADOW_CASTER_WORLD | SHADOW_CASTER_VOBS | SHADOW_CASTER_MOBS;
 
-    engine->RenderShadowCube( LightInfo->Vob->GetPositionWorldXM(), range, target, nullptr, nullptr, false, LightInfo->IsIndoorVob, false,
-        &VobCache, &SkeletalVobCache, wc, clearDepth, staticCasterMask );
+    if ( GetHasOriginVob( LightInfo ) ) {
+        SetupVobsToExclude(LightInfo);
+        engine->RenderShadowCube( LightInfo->Vob->GetPositionWorldXM(), range, target, nullptr, nullptr, false, LightInfo->IsIndoorVob, false,
+            &VobCache, &SkeletalVobCache, wc, clearDepth, staticCasterMask, excludeVobsToExclude );
+        vobsToExclude.clear();
+    } else {
+        engine->RenderShadowCube( LightInfo->Vob->GetPositionWorldXM(), range, target, nullptr, nullptr, false, LightInfo->IsIndoorVob, false,
+            &VobCache, &SkeletalVobCache, wc, clearDepth, staticCasterMask );
+    }
 }
 
 void D3D11PointLight::RenderAnimatedShadowPass( RenderToDepthStencilBuffer& target, bool clearDepth ) {
@@ -219,8 +279,15 @@ void D3D11PointLight::RenderAnimatedShadowPass( RenderToDepthStencilBuffer& targ
     const float range = LightInfo->Vob->GetLightRange();
 
     const unsigned int animatedCasterMask = SHADOW_CASTER_ANIMATED;
-    engine->RenderShadowCube( LightInfo->Vob->GetPositionWorldXM(), range, target, nullptr, nullptr, false, LightInfo->IsIndoorVob, false,
-        nullptr, nullptr, nullptr, clearDepth, animatedCasterMask );
+    if ( GetHasOriginVob( LightInfo ) ) {
+        SetupVobsToExclude(LightInfo);
+        engine->RenderShadowCube( LightInfo->Vob->GetPositionWorldXM(), range, target, nullptr, nullptr, false, LightInfo->IsIndoorVob, false,
+            nullptr, nullptr, nullptr, clearDepth, animatedCasterMask, excludeVobsToExclude );
+        vobsToExclude.clear();
+    } else {
+        engine->RenderShadowCube( LightInfo->Vob->GetPositionWorldXM(), range, target, nullptr, nullptr, false, LightInfo->IsIndoorVob, false,
+            nullptr, nullptr, nullptr, clearDepth, animatedCasterMask );
+    }
 }
 
 /** Returns true if this is the first time that light is being rendered */
@@ -260,6 +327,15 @@ bool D3D11PointLight::IsInited() {
     return InitDone.load();
 }
 
+namespace {
+    bool PositionEqualEps( const XMFLOAT3& a, const XMFLOAT3& b, float eps = 1.0f ) {
+        const XMVECTOR va = XMLoadFloat3( &a );
+        const XMVECTOR vb = XMLoadFloat3( &b );
+        const XMVECTOR vEps = XMVectorReplicate( eps );
+        return XMVector3NearEqual( va, vb, vEps );
+    }
+}
+
 /** Returns if this light needs an update */
 bool D3D11PointLight::NeedsUpdate() {
     if ( !IsReady() )
@@ -271,8 +347,7 @@ bool D3D11PointLight::NeedsUpdate() {
         return shadowMode > 0;
     }
 
-    FXMVECTOR lastPos = XMLoadFloat3( &LastUpdatePosition );
-    const bool moved = !XMVector3Equal( LightInfo->Vob->GetPositionWorldXM(), lastPos );
+    const bool moved = !PositionEqualEps(LastUpdatePosition,  LightInfo->Vob->GetPositionWorld());
 
     if ( shadowMode == GothicRendererSettings::PLS_STATIC_ONLY ) {
         return moved || !m_StaticShadowReady || NotYetDrawn();
@@ -305,10 +380,10 @@ bool D3D11PointLight::WantsUpdate() {
 }
 
 /** Draws the surrounding scene into the cubemap */
-void D3D11PointLight::RenderCubemap( bool forceUpdate, D3D11ConstantBuffer* ViewMatricesCB ) {
+void D3D11PointLight::RenderCubemap( bool forceUpdate ) {
     if ( !IsReady() )
         return;
-    if ( !ViewMatricesCB || (!m_DepthCubemap && !m_TiledDepthTarget) )
+    if ( !m_DepthCubemap && !m_TiledDepthTarget )
         return;
 
     const int shadowMode = GetCurrentShadowMode();
@@ -318,8 +393,8 @@ void D3D11PointLight::RenderCubemap( bool forceUpdate, D3D11ConstantBuffer* View
     //	return;
     D3D11GraphicsEngine* engine = reinterpret_cast<D3D11GraphicsEngine*>(Engine::GraphicsEngine); // TODO: Remove and use newer system!
 
-    FXMVECTOR xmlastPos = XMLoadFloat3( &LastUpdatePosition );
-    const bool moved = !XMVector3Equal( LightInfo->Vob->GetPositionWorldXM(), xmlastPos );
+    XMFLOAT3 vobPos = LightInfo->Vob->GetPositionWorld();
+    const bool moved = !PositionEqualEps(LastUpdatePosition, vobPos);
 
     if ( moved ) {
         // Position changed, refresh our caches
@@ -340,11 +415,10 @@ void D3D11PointLight::RenderCubemap( bool forceUpdate, D3D11ConstantBuffer* View
             return; // Don't update when we don't need to
     }
 
-    FXMVECTOR vEyePt = LightInfo->Vob->GetPositionWorldXM();
+    const XMVECTOR vEyePt = XMLoadFloat3( &vobPos );
     //vEyePt += XMVectorSet(0, 1, 0, 0) * 20.0f; // Move lightsource out of the ground or other objects (torches!)
     // TODO: Move the actual lightsource up too!
 
-    XMVECTOR vLookDir;
     const XMVECTOR c_XM_Right = XMVectorSet( 1.f, 0.f, 0.f, 0.f );
     const XMVECTOR c_XM_Left = XMVectorSet( -1.f, 0.f, 0.f, 0.f );
     const XMVECTOR c_XM_Up = XMVectorSet( 0.f, 1.f, 0.f, 0.f );
@@ -355,6 +429,7 @@ void D3D11PointLight::RenderCubemap( bool forceUpdate, D3D11ConstantBuffer* View
     // Update indoor/outdoor-state
     LightInfo->IsIndoorVob = LightInfo->Vob->IsIndoorVob();
 
+    XMVECTOR vLookDir;
     // Generate cubemap view-matrices
     vLookDir = XMVectorAdd( c_XM_Right, vEyePt );
     XMStoreFloat4x4( &CubeMapViewMatrices[0], XMMatrixTranspose( XMMatrixLookAtLH( vEyePt, vLookDir, c_XM_Up ) ) );
@@ -396,9 +471,10 @@ void D3D11PointLight::RenderCubemap( bool forceUpdate, D3D11ConstantBuffer* View
         XMStoreFloat4x4( &gcb.PCR_ViewProj[i], proj * XMLoadFloat4x4( &CubeMapViewMatrices[i] ) );
     }
 
-    ViewMatricesCB->UpdateBuffer( &gcb );
-    ViewMatricesCB->BindToVertexShader( 3 ); // Layered vertex shader
-    ViewMatricesCB->BindToGeometryShader( 2 ); // Cubemap geometry shader
+    // Allocate the cubemap view-matrices CB from the per-frame dynamic ring pool
+    ConstantBufferAllocation viewMatricesCB = engine->AllocateDynamicCB( &gcb, sizeof( gcb ) );
+    engine->BindDynamicCBToVertexShader( 3, viewMatricesCB ); // Layered vertex shader
+    engine->BindDynamicCBToGeometryShader( 2, viewMatricesCB ); // Cubemap geometry shader
 
     RenderFullCubemap();
 
@@ -406,7 +482,7 @@ void D3D11PointLight::RenderCubemap( bool forceUpdate, D3D11ConstantBuffer* View
     Engine::GAPI->GetRendererState().GraphicsState.SetGraphicsSwitch( GSWITCH_LINEAR_DEPTH, false );
 
     LastUpdateColor = LightInfo->Vob->GetLightColor();
-    XMStoreFloat3( &LastUpdatePosition, vEyePt );
+    LastUpdatePosition = vobPos;
     DrawnOnce = true;
 }
 
@@ -423,22 +499,23 @@ void D3D11PointLight::RenderFullCubemap() {
     }
 
     const int shadowMode = GetCurrentShadowMode();
-    if ( shadowMode >= GothicRendererSettings::PLS_STATIC_ONLY ) {
+    if ( !m_StaticShadowReady && shadowMode == GothicRendererSettings::PLS_STATIC_ONLY ) {
         RenderStaticShadowPass( *activeTarget, true );
         m_StaticShadowReady = true;
+        return;
     }
 
     if ( shadowMode == GothicRendererSettings::PLS_UPDATE_DYNAMIC ) {
         DepthStencilPool* dsPool = engine->GetPfxRenderer()->GetDepthStencilPool();
         AcquireStaticAsideShadowMap( dsPool, m_CurrentResolution );
 
-        if ( !m_StaticShadowReady || !m_StaticDepthCubemap ) {
+        if ( !m_StaticShadowReady) {
             if ( m_StaticDepthCubemap ) {
                 RenderStaticShadowPass( *m_StaticDepthCubemap, true );
                 m_StaticShadowReady = true;
             } else {
+                // No aside buffer, we can't cache the static shadows.
                 RenderStaticShadowPass( *activeTarget, true );
-                m_StaticShadowReady = true;
             }
         }
 
@@ -447,14 +524,26 @@ void D3D11PointLight::RenderFullCubemap() {
         }
 
         RenderAnimatedShadowPass( *activeTarget, false );
-    } else if ( shadowMode == GothicRendererSettings::PLS_FULL ) {
+        return;
+    }
+    
+    if ( shadowMode == GothicRendererSettings::PLS_FULL ) {
         auto wc = &WorldMeshCache;
         if ( WorldCacheInvalid ) {
             wc = nullptr;
         }
 
-        engine->RenderShadowCube( LightInfo->Vob->GetPositionWorldXM(), LightInfo->Vob->GetLightRange(), *activeTarget,
-            nullptr, nullptr, false, LightInfo->IsIndoorVob, false, &VobCache, &SkeletalVobCache, wc, true, SHADOW_CASTER_ALL );
+        if ( GetHasOriginVob( LightInfo ) ) {
+            SetupVobsToExclude(LightInfo);
+
+            engine->RenderShadowCube( LightInfo->Vob->GetPositionWorldXM(), LightInfo->Vob->GetLightRange(), *activeTarget,
+                nullptr, nullptr, false, LightInfo->IsIndoorVob, false, &VobCache, &SkeletalVobCache, wc, true, SHADOW_CASTER_ALL,
+                excludeVobsToExclude);
+            vobsToExclude.clear();
+        } else {
+            engine->RenderShadowCube( LightInfo->Vob->GetPositionWorldXM(), LightInfo->Vob->GetLightRange(), *activeTarget,
+                nullptr, nullptr, false, LightInfo->IsIndoorVob, false, &VobCache, &SkeletalVobCache, wc, true, SHADOW_CASTER_ALL );
+        }
     }
 }
 

@@ -162,7 +162,7 @@ public:
 
     /** Returns the name of this vob */
     std::string GetName() const {
-        return __GetObjectName().ToChar();
+        return GetObjectName().ToChar();
     }
 
     /** Returns the world-position of this vob */
@@ -379,9 +379,18 @@ public:
         }
         return nullptr;
     }
+    
+    template<HasGetStaticClassDef T>
+    const T* As() const {
+        const zCClassDef* classDef = reinterpret_cast<const zCObject*>(this)->_GetClassDef();
+        if ( CheckInheritance( classDef, T::GetStaticClassDef() ) ) {
+            return reinterpret_cast<const T*>(this);
+        }
+        return nullptr;
+    }
 protected:
 
-    bool CheckInheritance( const zCClassDef* def, const zCClassDef* target ) {
+    bool CheckInheritance( const zCClassDef* def, const zCClassDef* target ) const {
         while ( def ) {
             if ( def == target ) {
                 return true;
@@ -390,8 +399,8 @@ protected:
         }
         return false;
     }
-
-    zSTRING& __GetObjectName() const {
+public:
+    zSTRING& GetObjectName() const {
         return reinterpret_cast<zSTRING&( __fastcall* )( const zCVob* )>( GothicMemoryLocations::zCObject::GetObjectName )( this );
     }
 };

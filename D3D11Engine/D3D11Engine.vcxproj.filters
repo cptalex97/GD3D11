@@ -91,6 +91,9 @@
     <Filter Include="Librarys\Tracy">
       <UniqueIdentifier>{7b69a12f-dac5-490c-825b-b1e5382d377c}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Librarys\stb">
+      <UniqueIdentifier>{b0119c3a-7a6b-4406-a285-2a8b05760c74}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="pch.h" />
@@ -218,9 +221,6 @@
       <Filter>Engine\D3D11</Filter>
     </ClInclude>
     <ClInclude Include="D3D11VShader.h">
-      <Filter>Engine\D3D11</Filter>
-    </ClInclude>
-    <ClInclude Include="D3D11ConstantBuffer.h">
       <Filter>Engine\D3D11</Filter>
     </ClInclude>
     <ClInclude Include="D3D11VertexBuffer.h">
@@ -384,6 +384,9 @@
       <Filter>Engine\D3D11\PFX\Effects</Filter>
     </ClInclude>
     <ClInclude Include="D3D11PFX_DepthOfField.h">
+      <Filter>Engine\D3D11\PFX\Effects</Filter>
+    </ClInclude>
+    <ClInclude Include="D3D11PFX_Bloom.h">
       <Filter>Engine\D3D11\PFX\Effects</Filter>
     </ClInclude>
     <ClInclude Include="D3D11OcclusionQuerry.h">
@@ -850,6 +853,13 @@
     <ClInclude Include="oCMobInter.h">
       <Filter>ZenGin\Classes</Filter>
     </ClInclude>
+    <ClInclude Include="ConstantBufferPool.h" />
+    <ClInclude Include="vendor\mikktspace.h" />
+    <ClInclude Include="VertexPacking.h" />
+    <ClInclude Include="DDSArrayLoader.h" />
+    <ClInclude Include="vendor\stb\stb_image.h">
+      <Filter>Librarys\stb</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="pch.cpp" />
@@ -884,9 +894,6 @@
       <Filter>Engine\D3D11</Filter>
     </ClCompile>
     <ClCompile Include="D3D11VShader.cpp">
-      <Filter>Engine\D3D11</Filter>
-    </ClCompile>
-    <ClCompile Include="D3D11ConstantBuffer.cpp">
       <Filter>Engine\D3D11</Filter>
     </ClCompile>
     <ClCompile Include="D3D11VertexBuffer.cpp">
@@ -959,6 +966,9 @@
       <Filter>Engine\D3D11\PFX\Effects</Filter>
     </ClCompile>
     <ClCompile Include="D3D11PFX_DepthOfField.cpp">
+      <Filter>Engine\D3D11\PFX\Effects</Filter>
+    </ClCompile>
+    <ClCompile Include="D3D11PFX_Bloom.cpp">
       <Filter>Engine\D3D11\PFX\Effects</Filter>
     </ClCompile>
     <ClCompile Include="D3D11OcclusionQuerry.cpp">
@@ -1156,6 +1166,8 @@
     <ClCompile Include="GothicGraphicsState.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="ConstantBufferPool.cpp" />
+    <ClCompile Include="vendor\mikktspace.c" />
   </ItemGroup>
   <ItemGroup>
     <None Include="ddraw.def">
@@ -1204,10 +1216,16 @@
     <None Include="Shaders\VS_GrassInstanced.hlsl">
       <Filter>Engine\Shaders</Filter>
     </None>
+    <None Include="Shaders\VS_GrassInstancedShadow.hlsl">
+      <Filter>Engine\Shaders</Filter>
+    </None>
     <None Include="Shaders\VS_DecalInstanced.hlsl">
       <Filter>Engine\Shaders</Filter>
     </None>
     <None Include="Shaders\PS_Grass.hlsl">
+      <Filter>Engine\Shaders</Filter>
+    </None>
+    <None Include="Shaders\PS_GrassShadow.hlsl">
       <Filter>Engine\Shaders</Filter>
     </None>
     <None Include="Shaders\PS_PFX_VelocityDebug.hlsl">

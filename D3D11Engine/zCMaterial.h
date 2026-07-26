@@ -7,8 +7,16 @@
 #include "zCTexture.h"
 #include "zTypes.h"
 
-const int zMAT_GROUP_WATER = 5;
-const int zMAT_GROUP_SNOW = 6;
+enum zTMat_Group {
+    zMAT_GROUP_UNDEF,
+    zMAT_GROUP_METAL,
+    zMAT_GROUP_STONE,
+    zMAT_GROUP_WOOD,
+    zMAT_GROUP_EARTH,
+    zMAT_GROUP_WATER,
+    zMAT_GROUP_SNOW,
+    zMAT_NUM_MAT_GROUP
+  };
 
 class zCTexAniCtrl {
 private:
@@ -17,6 +25,10 @@ private:
     float AniFPS;
     DWORD FrameCtr;
     int	IsOneShotAni;
+public:
+    void AdvanceAni(zCTexture* texture) {
+        reinterpret_cast<void( __fastcall* )(zCTexAniCtrl*, int, zCTexture* )>( GothicMemoryLocations::zCMaterial::AdvanceAni )( this, 0, texture );
+    }
 };
 
 class zCMaterial {
@@ -72,8 +84,7 @@ public:
         if ( texture ) {
             unsigned char flags = *reinterpret_cast<unsigned char*>(reinterpret_cast<DWORD>(texture) + GothicMemoryLocations::zCTexture::Offset_Flags);
             if ( flags & GothicMemoryLocations::zCTexture::Mask_FlagIsAnimated ) {
-                reinterpret_cast<void( __fastcall* )(zCTexAniCtrl*, int, zCTexture* )>
-                    ( GothicMemoryLocations::zCMaterial::AdvanceAni )( GetTexAniCtrl(), 0, texture );
+                GetTexAniCtrl()->AdvanceAni(texture);
                 return GetCurrentTexture();
             }
         }
@@ -219,12 +230,19 @@ public:
 #endif
     }
 
+    zTMat_WaveSpeed GetRawWaveSpeed() {
+#ifdef BUILD_GOTHIC_1_08k
+        return zTSpeed_NONE;
+#else
+        return *reinterpret_cast<zTMat_WaveSpeed*>(THISPTR_OFFSET( GothicMemoryLocations::zCMaterial::Offset_WaveSpeed ));
+#endif
+    }
+    
     float GetWaveSpeed() {
 #ifdef BUILD_GOTHIC_1_08k
         return 1.0f;
 #else
-        zTMat_WaveSpeed waveSpeed = *reinterpret_cast<zTMat_WaveSpeed*>(THISPTR_OFFSET( GothicMemoryLocations::zCMaterial::Offset_WaveSpeed ));
-        switch ( waveSpeed ) {
+        switch ( GetRawWaveSpeed() ) {
             case zTSpeed_SLOW: return 0.4f;
             case zTSpeed_NORMAL: return 1.0f;
             case zTSpeed_FAST: return 4.0f;
@@ -241,6 +259,11 @@ public:
 #endif
     }
     
+    std::string_view GetNameView() const {
+        auto& name = __GetName();
+        return std::string_view(name.ToChar(), name.Length());
+    }
+
     const zSTRING& __GetName() const {
         return reinterpret_cast<zSTRING&(__fastcall*)( const zCMaterial* )>( GothicMemoryLocations::zCObject::GetObjectName )( this );
     }

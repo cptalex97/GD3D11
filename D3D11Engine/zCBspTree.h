@@ -12,6 +12,7 @@
 #include "Logger.h"
 #include "BaseGraphicsEngine.h"
 #include "BaseLineRenderer.h"
+#include "ThreadPool.h"
 
 class zCFileBIN;
 class zCVob;
@@ -168,9 +169,9 @@ public:
 
 #ifdef DEBUG_SHOW_COLLISION
             for ( int i = 0; i < numFound; i++ ) {
-                Engine::GraphicsEngine->GetLineRenderer()->AddTriangle( *polyList[i]->getVertices()[0]->Position.toXMFLOAT3(),
-                    *polyList[i]->getVertices()[1]->Position.toXMFLOAT3(),
-                    *polyList[i]->getVertices()[2]->Position.toXMFLOAT3() );
+                Engine::GraphicsEngine->GetLineRenderer()->AddTriangle( polyList[i]->getVertices()[0]->Position,
+                    polyList[i]->getVertices()[1]->Position,
+                    polyList[i]->getVertices()[2]->Position );
             }
 
 
@@ -227,7 +228,7 @@ public:
         LogInfo() << "Loading world!";
 
         // Make sure worker thread don't work on any point light
-        Engine::RefreshWorkerThreadpool();
+        Engine::WorkerThreadPool->clearAndFlush();
 
         int r = HookedFunctions::OriginalFunctions.original_zCBspTreeLoadBIN( thisptr, file, skip );
         Engine::GAPI->OnGeometryLoaded( reinterpret_cast<zCBspTree*>(thisptr) );

@@ -14,6 +14,7 @@
 #include "D3D11PFX_SMAA.h"
 #include "D3D11PFX_GodRays.h"
 #include "D3D11PFX_DepthOfField.h"
+#include "D3D11PFX_Bloom.h"
 #include "D3D11PFX_TAA.h"
 #include "D3D11PFX_SimpleSharpen.h"
 #include "D3D11PFX_CAS.h"
@@ -21,7 +22,6 @@
 #include "D3D11PFX_FSR3.h"
 #include "D3D11PFX_SAO.h"
 #include "D3D11PFX_ASSAO.h"
-#include "D3D11ConstantBuffer.h"
 #include "ConstantBufferStructs.h"
 #include "GothicAPI.h"
 #include "GSky.h"
@@ -45,6 +45,7 @@ D3D11PfxRenderer::D3D11PfxRenderer() {
         FX_TAA = std::make_unique<D3D11PFX_TAA>( this );
         NvHBAO = std::make_unique<D3D11NVHBAO>();
         FX_SAO = std::make_unique<D3D11PFX_SAO>( this );
+        FX_Bloom = std::make_unique<D3D11PFX_Bloom>( this );
         PFX_FSR1 = std::make_unique<D3D11PFX_FSR1>( this );
         PFX_FSR3 = std::make_unique<D3D11PFX_FSR3>( this );
         PFX_ASSAO = std::make_unique<D3D11PFX_ASSAO>(
@@ -85,13 +86,19 @@ XRESULT D3D11PfxRenderer::RenderGodRays(ID3D11ShaderResourceView* backbuffer, ID
 }
 
 /** Renders the depth-of-field effect */
-XRESULT D3D11PfxRenderer::RenderDepthOfField(ID3D11ShaderResourceView* backbuffer) {
-    return FX_DepthOfField->Render( backbuffer );
+XRESULT D3D11PfxRenderer::RenderDepthOfField(ID3D11RenderTargetView* output, ID3D11ShaderResourceView* backbuffer, ID3D11ShaderResourceView* depthSrv, INT2 resolution) {
+    return FX_DepthOfField->Render( output, backbuffer, depthSrv, resolution );
+}
+
+/** Renders the standalone bloom effect */
+XRESULT D3D11PfxRenderer::RenderBloom(ID3D11RenderTargetView* output, ID3D11ShaderResourceView* sceneSrv, INT2 resolution) {
+    if ( !FX_Bloom ) return XR_FAILED;
+    return FX_Bloom->Render( output, sceneSrv, resolution );
 }
 
 /** Renders the HDR-Effect */
-XRESULT D3D11PfxRenderer::RenderHDR( ID3D11RenderTargetView* output, ID3D11ShaderResourceView* backbuffer ) {
-    return FX_HDR->Render( output, backbuffer );
+XRESULT D3D11PfxRenderer::RenderHDR( ID3D11RenderTargetView* output, ID3D11ShaderResourceView* backbuffer, INT2 resolution ) {
+    return FX_HDR->Render( output, backbuffer, resolution );
 }
 
 /** Renders the SMAA-Effect */
@@ -254,9 +261,11 @@ XRESULT D3D11PfxRenderer::RenderSAO(
 
 XRESULT D3D11PfxRenderer::RenderSAOCompute(
     ID3D11ShaderResourceView* depthSRV,
-    ID3D11ShaderResourceView* normalsSRV ) {
+    ID3D11ShaderResourceView* normalsSRV,
+    ID3D11UnorderedAccessView* outputUAV,
+    bool reconstructNormals ) {
     if ( !FX_SAO ) return XR_FAILED;
-    return FX_SAO->RenderAO( depthSRV, normalsSRV );
+    return FX_SAO->RenderAO( depthSRV, normalsSRV, outputUAV, reconstructNormals );
 }
 
 ID3D11ShaderResourceView* D3D11PfxRenderer::GetSAOResultSRV() const {
@@ -301,7 +310,7 @@ XRESULT D3D11PfxRenderer::RenderPostFXComposition(
         cb.HF_HeightFalloff = settings.FogHeightFalloff;
 
         float height = settings.FogHeight;
-        XMVECTOR color = XMLoadFloat3( settings.FogColorMod.toXMFLOAT3() );
+        XMVECTOR color = XMLoadFloat3( &settings.FogColorMod );
 
         float fnear = 15000.0f;
         float ffar = 60000.0f;
@@ -345,10 +354,10 @@ XRESULT D3D11PfxRenderer::RenderPostFXComposition(
         cb.HF_FogColorMod = FogColorMod;
         cb.HF_GlobalDensity = Toolbox::lerp( cb.HF_GlobalDensity, settings.RainFogDensity, rain * fogDensityFactorRain );
 
-        compositionPS->GetBuffer( "PFXBuffer" ).Update( &cb ).Bind();
+        compositionPS->UpdateBuffer("PFXBuffer", &cb, sizeof(cb));
 
         GSky* sky = Engine::GAPI->GetSky();
-        compositionPS->GetBuffer( "Atmosphere" ).Update( &sky->GetAtmosphereCB() ).Bind();
+        compositionPS->UpdateBuffer("Atmosphere", &sky->GetAtmosphereCB(), sizeof(sky->GetAtmosphereCB()));
     }
 
     // Set viewport

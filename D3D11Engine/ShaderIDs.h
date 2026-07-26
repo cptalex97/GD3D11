@@ -19,6 +19,7 @@ enum class VShaderID : size_t {
     VS_ExInstancedObj,
     VS_ExInstanced,
     VS_GrassInstanced,
+    VS_GrassInstancedShadow,
     VS_Lines,
     VS_Lines_XYZRHW,
     VS_PFX,
@@ -32,6 +33,8 @@ enum class VShaderID : size_t {
     VS_ExSkeletalCube,
     VS_ExNodeInstanced,
     VS_DecalInstanced,
+    VS_ExDepth,
+    VS_ExPacked,
     COUNT
 };
 
@@ -50,6 +53,7 @@ enum class PShaderID : size_t {
     PS_ParticleDistortion,
     PS_PFX_ApplyParticleDistortion,
     PS_Grass,
+    PS_GrassShadow,
     PS_PFX_Simple,
     PS_PFX_Simple_R8,
     PS_PFX_VelocityDebug,
@@ -99,6 +103,7 @@ enum class PShaderID : size_t {
     PS_PFX_FSR1_EASU,
     PS_PFX_FSR1_RCAS,
     PS_PFX_Composition,
+    PS_PFX_BloomComposite,
     PS_FP_Diffuse,
     PS_FP_DiffuseNormalmapped,
     PS_FP_DiffuseNormalmappedFxMap,
@@ -106,6 +111,7 @@ enum class PShaderID : size_t {
     PS_FP_DiffuseNormalmappedAlphaTest,
     PS_FP_DiffuseNormalmappedAlphaTestFxMap,
     PS_FP_ShadowMask,
+    PS_ResolveDepthMSAA,
     COUNT
 };
 
@@ -131,7 +137,12 @@ enum class CShaderID : size_t {
     CS_PFX_DoF_Gauss,
     CS_PFX_DoF_Composite,
     CS_PFX_SAO,
+    CS_PFX_SAO_DepthNormals,
     CS_PFX_SAO_Blur,
     CS_PFX_Sharpen,
+    CS_PFX_Bloom_Prefilter,
+    CS_PFX_Bloom_Downsample,
+    CS_PFX_Bloom_Upsample,
+    CS_GenerateNormalsFromDepth,
     COUNT
 };

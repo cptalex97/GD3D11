@@ -5,7 +5,6 @@
 #include "D3D11HDShader.h"
 #include "D3D11GShader.h"
 #include "D3D11CShader.h"
-#include "D3D11ConstantBuffer.h"
 #include "GothicGraphicsState.h"
 #include "ConstantBufferStructs.h"
 #include "GothicAPI.h"
@@ -117,6 +116,14 @@ XRESULT D3D11ShaderManager::Init() {
     Shaders.push_back( ShaderInfo::make<VShaderID::VS_Ex>( "VS_Ex.hlsl" )
         .with_layout( VERTEX_INPUT_LAYOUT_1 )  );
 
+    // Position-only variant used by opaque depth/shadow passes (12-byte vertex stream).
+    Shaders.push_back( ShaderInfo::make<VShaderID::VS_ExDepth>( "VS_ExDepth.hlsl" )
+        .with_layout( VERTEX_INPUT_LAYOUT_POS_ONLY )  );
+
+    // Packed variant for the wrapped world mesh (36-byte vertex stream; forwards precomputed tangent).
+    Shaders.push_back( ShaderInfo::make<VShaderID::VS_ExPacked>( "VS_ExPacked.hlsl" )
+        .with_layout( VERTEX_INPUT_LAYOUT_PACKED_EX )  );
+
     Shaders.push_back( ShaderInfo::make<VShaderID::VS_ExNode>( "VS_ExNode.hlsl" )
         .with_layout( VERTEX_INPUT_LAYOUT_1 ) );
 
@@ -127,7 +134,7 @@ XRESULT D3D11ShaderManager::Init() {
         .with_layout( VERTEX_INPUT_LAYOUT_15_VS_DecalInstanced )  );
 
     Shaders.push_back( ShaderInfo::make<VShaderID::VS_ExWater>( "VS_ExWater.hlsl" )
-        .with_layout( VERTEX_INPUT_LAYOUT_1 )
+        .with_layout( VERTEX_INPUT_LAYOUT_PACKED_EX )
         .with_macros( [](std::vector<D3D_SHADER_MACRO>& list) {
             const auto& s = Engine::GAPI->GetRendererState().RendererSettings;
 #ifdef BUILD_GOTHIC_2_6_fix
@@ -201,6 +208,9 @@ XRESULT D3D11ShaderManager::Init() {
     Shaders.push_back( ShaderInfo::make<VShaderID::VS_GrassInstanced>( "VS_GrassInstanced.hlsl" )
         .with_layout( VERTEX_INPUT_LAYOUT_9_VS_GrassInstanced )  );
 
+    Shaders.push_back( ShaderInfo::make<VShaderID::VS_GrassInstancedShadow>( "VS_GrassInstancedShadow.hlsl" )
+        .with_layout( VERTEX_INPUT_LAYOUT_9_VS_GrassInstanced )  );
+
     Shaders.push_back( ShaderInfo::make<VShaderID::VS_Lines>( "VS_Lines.hlsl" )
         .with_layout( VERTEX_INPUT_LAYOUT_6_Lines )  );
 
@@ -227,6 +237,10 @@ XRESULT D3D11ShaderManager::Init() {
 
 
     Shaders.push_back( ShaderInfo::make<PShaderID::PS_Water>( "PS_Water.hlsl" )
+        .with_macros( []( std::vector<D3D_SHADER_MACRO>& list ) {
+            const auto& s = Engine::GAPI->GetRendererState().RendererSettings;
+            list.push_back( { "SSR_QUALITY", sNums[std::clamp<size_t>( s.WaterSSRQuality, 0, 3 )] } );
+        } )
         .with_category( ShaderCategory::Water )  );
 
     Shaders.push_back( ShaderInfo::make<PShaderID::PS_ParticleDistortion>( "PS_ParticleDistortion.hlsl" )  );
@@ -234,6 +248,8 @@ XRESULT D3D11ShaderManager::Init() {
     Shaders.push_back( ShaderInfo::make<PShaderID::PS_PFX_ApplyParticleDistortion>( "PS_PFX_ApplyParticleDistortion.hlsl" ) );
 
     Shaders.push_back( ShaderInfo::make<PShaderID::PS_Grass>( "PS_Grass.hlsl" ) );
+
+    Shaders.push_back( ShaderInfo::make<PShaderID::PS_GrassShadow>( "PS_GrassShadow.hlsl" ) );
 
     Shaders.push_back( ShaderInfo::make<VShaderID::VS_PFX>( "VS_PFX.hlsl" ) );
 
@@ -272,7 +288,7 @@ XRESULT D3D11ShaderManager::Init() {
     Shaders.push_back( ShaderInfo::make<PShaderID::PS_PFX_Composition>( "PS_PFX_Composition.hlsl" )
         .with_macros( [](std::vector<D3D_SHADER_MACRO>& list) {
             const auto& s = Engine::GAPI->GetRendererState().RendererSettings;
-            list.push_back( { "COMPOSE_SAO", (s.AoMode == AOMode::AO_SAO) ? "1" : "0" } );
+            // AO is now applied in the lighting pass (indirect light only), not in composition.
             list.push_back( { "COMPOSE_GODRAYS", s.EnableGodRays ? "1" : "0" } );
             list.push_back( { "COMPOSE_HEIGHTFOG", s.DrawFog ? "1" : "0" } );
         } ) );
@@ -321,6 +337,12 @@ XRESULT D3D11ShaderManager::Init() {
         list.push_back( {"PCF_FILTER_TAPS_NEAR",  isTaaEnabled ? "8" : "16"} );
         list.push_back( {"PCF_FILTER_TAPS_FAR",   isTaaEnabled ? "4" : "8"} );
     };
+    
+    ShaderInfo::MacroBuilder normalmappingConfigurationBuilder = [](std::vector<D3D_SHADER_MACRO>& list) {
+        const auto& s = Engine::GAPI->GetRendererState().RendererSettings;
+        list.push_back( {"NORMAL_MAP_RESTORE_Z", s.CompressedNormalsSupport ? "1" : "0"} );
+		list.push_back( {"NORMAL_MAP_MODE", sNums[std::clamp<size_t>(s.AllowNormalmaps, 1, 2)]} );
+    };
 
     Shaders.push_back( ShaderInfo::make<PShaderID::PS_DS_AtmosphericScattering>( "PS_DS_AtmosphericScattering.hlsl" )
         .with_macros( shadowMacroBuilder )
@@ -345,12 +367,14 @@ XRESULT D3D11ShaderManager::Init() {
     Shaders.push_back( ShaderInfo::make<PShaderID::PS_LinDepth>( "PS_LinDepth.hlsl" )  );
 
     Shaders.push_back( ShaderInfo::make<PShaderID::PS_DiffuseNormalmapped>( "PS_Diffuse.hlsl" )
+        .with_macros(normalmappingConfigurationBuilder)
         .with_macros( {
             {"NORMALMAPPING", "1"},
             {"ALPHATEST", "0"},
         } ) );
 
     Shaders.push_back( ShaderInfo::make<PShaderID::PS_DiffuseNormalmappedFxMap>( "PS_Diffuse.hlsl" )
+        .with_macros(normalmappingConfigurationBuilder)
         .with_macros( {
             {"NORMALMAPPING", "1"},
             {"ALPHATEST", "0"},
@@ -371,12 +395,14 @@ XRESULT D3D11ShaderManager::Init() {
             } ) );
 
     Shaders.push_back( ShaderInfo::make<PShaderID::PS_DiffuseNormalmappedAlphaTest>( "PS_Diffuse.hlsl" )
+        .with_macros(normalmappingConfigurationBuilder)
         .with_macros( {
             {"NORMALMAPPING", "1"},
             {"ALPHATEST", "1"},
         } ) );
 
     Shaders.push_back( ShaderInfo::make<PShaderID::PS_DiffuseNormalmappedAlphaTestFxMap>( "PS_Diffuse.hlsl" )
+        .with_macros(normalmappingConfigurationBuilder)
         .with_macros( {
             {"NORMALMAPPING", "1"},
             {"ALPHATEST", "1"},
@@ -444,6 +470,8 @@ XRESULT D3D11ShaderManager::Init() {
 
     Shaders.push_back( ShaderInfo::make<PShaderID::PS_PFX_DoF_Composite>( "PS_PFX_DoF_Composite.hlsl" )  );
 
+    Shaders.push_back( ShaderInfo::make<PShaderID::PS_PFX_BloomComposite>( "PS_PFX_BloomComposite.hlsl" ) );
+
     // TAA Shader
     Shaders.push_back( ShaderInfo::make<PShaderID::PS_PFX_TAA>( "PS_PFX_TAA.hlsl" )  );
 
@@ -485,9 +513,24 @@ XRESULT D3D11ShaderManager::Init() {
 
         Shaders.push_back( ShaderInfo::make<CShaderID::CS_PFX_SAO>( "CS_PFX_SAO.hlsl" ));
 
+        // Depth-only SAO variant: reconstructs view normals from depth (Forward+ fallback)
+        Shaders.push_back( ShaderInfo::make<CShaderID::CS_PFX_SAO_DepthNormals>( "CS_PFX_SAO.hlsl" )
+            .with_macros( {{ "SAO_RECONSTRUCT_NORMALS", "1" }} ) );
+
         Shaders.push_back( ShaderInfo::make<CShaderID::CS_PFX_SAO_Blur>( "CS_PFX_SAO_Blur.hlsl" ));
 
         Shaders.push_back( ShaderInfo::make<CShaderID::CS_PFX_Sharpen>( "CS_PFX_Sharpen.hlsl" ));
+
+        // Bloom pyramid (FL11+): prefilter (bright-pass) + plain downsample share one shader
+        Shaders.push_back( ShaderInfo::make<CShaderID::CS_PFX_Bloom_Prefilter>( "CS_PFX_Bloom_Downsample.hlsl" )
+            .with_macros( {{ "BLOOM_PREFILTER", "1" }} ) );
+
+        Shaders.push_back( ShaderInfo::make<CShaderID::CS_PFX_Bloom_Downsample>( "CS_PFX_Bloom_Downsample.hlsl" ));
+
+        Shaders.push_back( ShaderInfo::make<CShaderID::CS_PFX_Bloom_Upsample>( "CS_PFX_Bloom_Upsample.hlsl" ));
+
+        // Optional Forward+ smooth-normals-from-depth pass (feeds SAO/ASSAO AO producers)
+        Shaders.push_back( ShaderInfo::make<CShaderID::CS_GenerateNormalsFromDepth>( "CS_GenerateNormalsFromDepth.hlsl" ));
 
         // Forward+ pixel shader variants
         Shaders.push_back( ShaderInfo::make<PShaderID::PS_FP_Diffuse>( "PS_Diffuse.hlsl" )
@@ -500,6 +543,7 @@ XRESULT D3D11ShaderManager::Init() {
 
         Shaders.push_back( ShaderInfo::make<PShaderID::PS_FP_DiffuseNormalmapped>( "PS_Diffuse.hlsl" )
             .with_macros(shadowMacroBuilder)
+            .with_macros(normalmappingConfigurationBuilder)
             .with_macros( {
                 { "FORWARD_PLUS", "1" },
                 { "NORMALMAPPING", "1" },
@@ -508,6 +552,7 @@ XRESULT D3D11ShaderManager::Init() {
 
         Shaders.push_back( ShaderInfo::make<PShaderID::PS_FP_DiffuseNormalmappedFxMap>( "PS_Diffuse.hlsl" )
             .with_macros(shadowMacroBuilder)
+            .with_macros(normalmappingConfigurationBuilder)
             .with_macros( {
                 { "FORWARD_PLUS", "1" },
                 { "NORMALMAPPING", "1" },
@@ -525,6 +570,7 @@ XRESULT D3D11ShaderManager::Init() {
 
         Shaders.push_back( ShaderInfo::make<PShaderID::PS_FP_DiffuseNormalmappedAlphaTest>( "PS_Diffuse.hlsl" )
             .with_macros(shadowMacroBuilder)
+            .with_macros(normalmappingConfigurationBuilder)
             .with_macros( {
                 { "FORWARD_PLUS", "1" },
                 { "NORMALMAPPING", "1" },
@@ -533,6 +579,7 @@ XRESULT D3D11ShaderManager::Init() {
 
         Shaders.push_back( ShaderInfo::make<PShaderID::PS_FP_DiffuseNormalmappedAlphaTestFxMap>( "PS_Diffuse.hlsl" )
             .with_macros(shadowMacroBuilder)
+            .with_macros(normalmappingConfigurationBuilder)
             .with_macros( {
                 { "FORWARD_PLUS", "1" },
                 { "NORMALMAPPING", "1" },
@@ -542,6 +589,9 @@ XRESULT D3D11ShaderManager::Init() {
 
         Shaders.push_back( ShaderInfo::make<PShaderID::PS_FP_ShadowMask>( "PS_FP_ShadowMask.hlsl" )
             .with_macros(shadowMacroBuilder)
+            .with_category( ShaderCategory::LightsAndShadows ) );
+
+        Shaders.push_back( ShaderInfo::make<PShaderID::PS_ResolveDepthMSAA>( "PS_ResolveDepthMSAA.hlsl" )
             .with_category( ShaderCategory::LightsAndShadows ) );
     }
 

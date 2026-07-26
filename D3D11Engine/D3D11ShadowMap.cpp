@@ -343,7 +343,6 @@ void D3D11ShadowMap::WaitShadowCullingComplete()
 }
 
 void D3D11ShadowMap::Init( Microsoft::WRL::ComPtr<ID3D11Device1>& device, Microsoft::WRL::ComPtr<ID3D11DeviceContext1>& context, int size ) {
-    HRESULT hr;
     m_device = device;
     m_context = context;
 
@@ -360,13 +359,6 @@ void D3D11ShadowMap::Init( Microsoft::WRL::ComPtr<ID3D11Device1>& device, Micros
     for ( int i = 0; i < MAX_CSM_CASCADES; ++i ) {
         m_RenderQueues[i] = std::make_unique<D3D11RenderQueue>( device.Get(), context.Get() );
     }
-
-    D3D11GraphicsEngineBase* engine = reinterpret_cast<D3D11GraphicsEngineBase*>( Engine::GraphicsEngine );
-
-    // Create constantbuffer for the view-matrices
-    D3D11ConstantBuffer* cb = nullptr;
-    LE(engine->CreateConstantBuffer( &cb, nullptr, sizeof( CubemapGSConstantBuffer ) ));
-    m_PointLightCB.reset( cb );
 
     Resize( s );
 
@@ -484,7 +476,7 @@ XRESULT D3D11ShadowMap::PrepareRender()
     m_CascadeSplits.insert( m_CascadeSplits.begin(), splits.begin(), splits.end() );
 
     // Get current light direction from atmosphere
-    XMVECTOR currentDir = XMLoadFloat3( Engine::GAPI->GetSky()->GetAtmosphereCB().AC_LightPos.toXMFLOAT3() );
+    XMVECTOR currentDir = XMLoadFloat3( &Engine::GAPI->GetSky()->GetAtmosphereCB().AC_LightPos );
     currentDir = XMVector3Normalize( currentDir );
 
     // *** TEMPORAL SMOOTHING FOR LIGHT DIRECTION ***
@@ -1062,7 +1054,7 @@ XRESULT D3D11ShadowMap::DrawPointlightShadows( std::vector<VobLightInfo*>& light
 
     // Render the immediate priority lights
     for ( auto const& importantUpdate : importantUpdates ) {
-        static_cast<D3D11PointLight*>(importantUpdate->LightShadowBuffers.get())->RenderCubemap( importantUpdate->UpdateShadows, m_PointLightCB.get() );
+        static_cast<D3D11PointLight*>(importantUpdate->LightShadowBuffers.get())->RenderCubemap( importantUpdate->UpdateShadows );
         importantUpdate->UpdateShadows = false;
     }
 
@@ -1089,7 +1081,7 @@ XRESULT D3D11ShadowMap::DrawPointlightShadows( std::vector<VobLightInfo*>& light
         light->UpdateShadows = false;
 
         // FORCE the render! It waited in line for its turn, it must draw.
-        l->RenderCubemap( force, m_PointLightCB.get() );
+        l->RenderCubemap( force );
         graphicsEngine->DebugPointlight = l;
 
         updatesDone++;
@@ -1196,12 +1188,13 @@ XRESULT D3D11ShadowMap::DrawPointlightLights(
     return m_LegacyDeferred.DrawPointlightLights( lights, color, normals, specular, depthCopy );
 }
 
-XRESULT D3D11ShadowMap::DrawLighting( 
+XRESULT D3D11ShadowMap::DrawLighting(
     std::vector<VobLightInfo*>& lights,
     RenderToTextureBuffer& color,
     RenderToTextureBuffer& normals,
-    RenderToTextureBuffer& specular,    
-    RenderToTextureBuffer& depthCopy) {
+    RenderToTextureBuffer& specular,
+    RenderToTextureBuffer& depthCopy,
+    ID3D11ShaderResourceView* aoMaskSRV) {
     auto graphicsEngine = reinterpret_cast<D3D11GraphicsEngine*>(Engine::GraphicsEngine);
     auto& settings = Engine::GAPI->GetRendererState().RendererSettings;
 
@@ -1235,7 +1228,7 @@ XRESULT D3D11ShadowMap::DrawLighting(
     srvs[0] = specular.GetShaderResView().Get();
     m_context->PSSetShaderResources( 7, 1, srvs );
 
-    DrawWorldLights();
+    DrawWorldLights( aoMaskSRV );
 
     m_context->OMSetRenderTargets( 1, graphicsEngine->GetHDRBackBuffer().GetRenderTargetView().GetAddressOf(),
         graphicsEngine->GetDepthBuffer()->GetDepthStencilView().Get() );
@@ -1369,8 +1362,10 @@ DS_ScreenQuadConstantBuffer D3D11ShadowMap::FillSunCSMConstantBuffer() const {
     // shader before depth->world reconstruction so shadows don't crawl/flicker each frame.
     scb.SQ_JitterOffset = float2( proj._13 * 0.5f, -proj._23 * 0.5f );
 
-    XMStoreFloat3( scb.SQ_LightDirectionVS.toXMFLOAT3(),
-        XMVector3TransformNormal( XMLoadFloat3( sky->GetAtmosphereCB().AC_LightPos.toXMFLOAT3() ), view ) );
+    XMVECTOR lightDirWorld = XMLoadFloat3( &sky->GetAtmosphereCB().AC_LightPos );
+    XMStoreFloat3( &scb.SQ_LightDirectionWS, lightDirWorld );
+    XMStoreFloat3( &scb.SQ_LightDirectionVS,
+        XMVector3TransformNormal( lightDirWorld, view ) );
 
     float3 sunColor = settings.SunLightColor;
     float sunStrength = Toolbox::lerp(
@@ -1440,7 +1435,7 @@ DS_ScreenQuadConstantBuffer D3D11ShadowMap::FillSunCSMConstantBuffer() const {
     return scb;
 }
 
-XRESULT D3D11ShadowMap::DrawWorldLights()
+XRESULT D3D11ShadowMap::DrawWorldLights( ID3D11ShaderResourceView* aoMaskSRV )
 {
     auto graphicsEngine = reinterpret_cast<D3D11GraphicsEngine*>(Engine::GraphicsEngine);
     auto _ = graphicsEngine->RecordGraphicsEvent( GE_NAME( "DrawWorldLights" ) );
@@ -1484,7 +1479,7 @@ XRESULT D3D11ShadowMap::DrawWorldLights()
     graphicsEngine->SetupVS_ExMeshDrawCall();
 
     GSky* sky = Engine::GAPI->GetSky();
-    psAtmo->GetBuffer("Atmosphere").Update(&sky->GetAtmosphereCB()).Bind();
+    psAtmo->UpdateBuffer("Atmosphere", &sky->GetAtmosphereCB(), sizeof(sky->GetAtmosphereCB()));
 
     auto& proj = Engine::GAPI->GetProjectionMatrix();
     DS_ScreenQuadConstantBuffer scb = {};
@@ -1502,8 +1497,10 @@ XRESULT D3D11ShadowMap::DrawWorldLights()
     // shader before depth->world reconstruction so shadows don't crawl/flicker each frame.
     scb.SQ_JitterOffset = float2( proj._13 * 0.5f, -proj._23 * 0.5f );
 
-    XMStoreFloat3( scb.SQ_LightDirectionVS.toXMFLOAT3(),
-        XMVector3TransformNormal( XMLoadFloat3( sky->GetAtmosphereCB().AC_LightPos.toXMFLOAT3() ), view ) );
+    XMVECTOR lightDirWorld = XMLoadFloat3( &sky->GetAtmosphereCB().AC_LightPos );
+    XMStoreFloat3( &scb.SQ_LightDirectionWS, lightDirWorld );
+    XMStoreFloat3( &scb.SQ_LightDirectionVS,
+        XMVector3TransformNormal( lightDirWorld, view ) );
 
     float3 sunColor =
         settings.SunLightColor;
@@ -1588,7 +1585,7 @@ XRESULT D3D11ShadowMap::DrawWorldLights()
             scb.SQ_LightColor = float4( 1, 1, 1, DEFAULT_INDOOR_VOB_AMBIENT.x );
         }
 
-    psAtmo->GetBuffer( "DS_ScreenQuadConstantBuffer" ).Update( &scb ).Bind();
+    psAtmo->UpdateBuffer("DS_ScreenQuadConstantBuffer", &scb, sizeof(scb));
 
     // CSM: Bind the cascade array to a single slot (Texture2DArray)
     BindToPixelShader( m_context.Get(), TX_ShadowmapArray );
@@ -1602,6 +1599,11 @@ XRESULT D3D11ShadowMap::DrawWorldLights()
 
     graphicsEngine->GetDistortionTexture()->BindToPixelShader( TX_Distortion );
     graphicsEngine->GetBlueNoiseTexture()->BindToPixelShader( TX_BlueNoise512 );
+
+    // Screen-space AO mask (applied to indirect light only). White fallback when disabled.
+    ID3D11ShaderResourceView* aoSRV = aoMaskSRV ? aoMaskSRV
+        : graphicsEngine->GetWhiteTexture()->GetShaderResourceView().Get();
+    m_context->PSSetShaderResources( TX_AOMask, 1, &aoSRV );
 
     // CSM: Nur 1x rendern!
     graphicsEngine->GetPfxRenderer()->DrawFullScreenQuad();
@@ -1623,7 +1625,8 @@ void XM_CALLCONV D3D11ShadowMap::RenderShadowCube(
     std::list<SkeletalVobInfo*>* renderedMobs,
     std::vector<std::pair<MeshKey, MeshInfo*>>* worldMeshCache,
     bool clearDepth,
-    unsigned int casterMask ) {
+    unsigned int casterMask,
+    const std::move_only_function<bool(const zCVob*) const>& ignoreVob ) {
 
     auto graphicsEngine = reinterpret_cast<D3D11GraphicsEngine*>(Engine::GraphicsEngine);
 
@@ -1686,10 +1689,10 @@ void XM_CALLCONV D3D11ShadowMap::RenderShadowCube(
     // Draw the world mesh without textures
     if ( useLayeredPath ) {
         graphicsEngine->DrawWorldAround_Layered( position, range, cullFront, indoor, noNPCs, renderedVobs,
-            renderedMobs, worldMeshCache, casterMask );
+            renderedMobs, worldMeshCache, casterMask, ignoreVob );
     } else {
         graphicsEngine->DrawWorldAround( position, range, cullFront, indoor, noNPCs, renderedVobs,
-            renderedMobs, worldMeshCache, casterMask );
+            renderedMobs, worldMeshCache, casterMask, ignoreVob );
     }
 
     // Restore state

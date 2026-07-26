@@ -142,6 +142,22 @@ struct SAOBlurConstantBuffer {
     float4 SAO_Blur_ProjParams;
 };
 
+// Used by CS_GenerateNormalsFromDepth (Forward+ optional smooth-normals-from-depth pass)
+struct AONormalsConstantBuffer {
+    float4 AON_ProjParams;    // x = 1/P._11, y = 1/P._22, z = P._34, w = P._33
+    float2 AON_InvResolution; // 1/width, 1/height
+    float2 AON_Pad;
+};
+
+struct BloomConstantBuffer {
+    float2 B_TexelSize;    // 1 / source dimensions
+    float B_Threshold;     // brightness threshold (prefilter)
+    float B_Knee;          // soft-knee width (prefilter)
+    float B_Intensity;     // composite strength
+    float B_FilterRadius;  // upsample tent radius
+    float2 B_Pad;
+};
+
 struct HDRSettingsConstantBuffer {
     float HDR_MiddleGray;
     float HDR_LumWhite;
@@ -184,6 +200,11 @@ struct DS_ScreenQuadConstantBuffer {
 
     float3 SQ_LightDirectionVS;
     float SQ_ShadowmapSize;
+
+    // World-space sun direction, precomputed on CPU (== normalize(AC_LightPos)).
+    // Avoids re-deriving it per-pixel via normalize(mul(SQ_LightDirectionVS, SQ_InvView)).
+    float3 SQ_LightDirectionWS;
+    float SQ_Pad0;
 
     float4 SQ_LightColor;
     
@@ -300,7 +321,12 @@ struct GrassConstantBuffer {
     float3 G_NormalVS;
     float G_Time;
     float G_WindStrength;
-    float3 G_Pad1;
+    float G_HeroAffectStrength;
+    float2 G_Pad1;
+    float3 G_PlayerPosWS;
+    // Forward+ with hardware MSAA active: PS_Grass sharpens its alpha test into a per-pixel
+    // coverage value instead of a hard binary clip, for the MSAA alpha-to-coverage blend mode.
+    uint32_t G_UseAlphaToCoverage;
 };
 
 struct DefaultHullShaderConstantBuffer {
@@ -346,6 +372,8 @@ struct RefractionInfoConstantBuffer {
 
     float3 RI_CameraPosition;
     float RI_Pad2;
+
+    XMFLOAT4X4 RI_View; // World->view, for screen-space reflection ray marching
 };
 
 struct AtmosphereConstantBuffer {

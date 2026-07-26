@@ -87,25 +87,37 @@ void D3D11DeferredRenderer::AddGeometryPasses( RenderGraph& graph,
     outReactiveMaskResource = reactiveMaskResource;
 }
 
+RGResourceHandle D3D11DeferredRenderer::AddAmbientOcclusionPass( RenderGraph& graph,
+    D3D11GraphicsEngine& engine,
+    RGResourceHandle normalsResource ) {
+    // Deferred: GBuffer normals are available before lighting, so feed them to the producer.
+    return engine.AddAOMaskPass( graph, normalsResource, /*depthOnlyNormals*/ false );
+}
+
 void D3D11DeferredRenderer::AddLightingPasses( RenderGraph& graph,
     D3D11GraphicsEngine& engine,
     RGResourceHandle colorResource,
     RGResourceHandle normalsResource,
     RGResourceHandle specularResource,
     RGResourceHandle backBufferHandle,
+    RGResourceHandle aoMaskResource,
     std::vector<VobLightInfo*>& frameLights ) {
 
-    graph.AddPass( RG_PASS_NAME("Draw Lighting"), [&, colorResource, normalsResource, specularResource, backBufferHandle]( RGBuilder& builder, RenderPass& pass ) {
+    graph.AddPass( RG_PASS_NAME("Draw Lighting"), [&, colorResource, normalsResource, specularResource, backBufferHandle, aoMaskResource]( RGBuilder& builder, RenderPass& pass ) {
         builder.Read( colorResource );
         builder.Read( normalsResource );
         builder.Read( specularResource );
+        if ( aoMaskResource != RG_INVALID_HANDLE ) builder.Read( aoMaskResource );
         builder.Write( backBufferHandle );
 
-        pass.m_executeCallback = [&engine, &frameLights, colorResource, normalsResource, specularResource]( const RenderGraph& graph ) -> void {
+        pass.m_executeCallback = [&engine, &frameLights, colorResource, normalsResource, specularResource, aoMaskResource]( const RenderGraph& graph ) -> void {
             TracyD3D11ZoneCGX( "D3D11DeferredRenderer::Draw Lighting" );
             auto colorTexture = graph.GetPhysicalTexture( colorResource );
             auto normalsTexture = graph.GetPhysicalTexture( normalsResource );
             auto specularTexture = graph.GetPhysicalTexture( specularResource );
+            auto* aoMaskTexture = ( aoMaskResource != RG_INVALID_HANDLE )
+                ? graph.GetPhysicalTexture( aoMaskResource ) : nullptr;
+            ID3D11ShaderResourceView* aoMaskSRV = aoMaskTexture ? aoMaskTexture->GetShaderResView().Get() : nullptr;
 
             engine.CopyDepthStencil(); // always needed due to depth testing!
 
@@ -113,7 +125,8 @@ void D3D11DeferredRenderer::AddLightingPasses( RenderGraph& graph,
                 *colorTexture,
                 *normalsTexture,
                 *specularTexture,
-                *engine.GetDepthBufferCopy() );
+                *engine.GetDepthBufferCopy(),
+                aoMaskSRV );
 
             if ( !Engine::GAPI->GetRendererState().RendererSettings.FixViewFrustum ) {
                 frameLights.clear();
@@ -133,12 +146,12 @@ bool D3D11DeferredRenderer::BindShaderForTexture( D3D11ShaderManager& shaderMana
     PShaderID resolvedDiffuseNormalmappedAlphatest,
     PShaderID resolvedDiffuseNormalmappedAlphatestFxMap ) {
 
-    auto active = activePS;
+    const auto& active = activePS;
     auto newShader = activePS;
 
-    bool blendAdd = zMatAlphaFunc == zMAT_ALPHA_FUNC_ADD;
-    bool blendBlend = zMatAlphaFunc == zMAT_ALPHA_FUNC_BLEND;
-    bool linZ = (Engine::GAPI->GetRendererState().GraphicsState.FF_GSwitches & GSWITCH_LINEAR_DEPTH) != 0;
+    const bool blendAdd = zMatAlphaFunc == zMAT_ALPHA_FUNC_ADD;
+    const bool blendBlend = zMatAlphaFunc == zMAT_ALPHA_FUNC_BLEND;
+    const bool linZ = (Engine::GAPI->GetRendererState().GraphicsState.FF_GSwitches & GSWITCH_LINEAR_DEPTH) != 0;
 
     if ( materialType == MaterialInfo::MT_Portal ) {
         newShader = shaderManager.GetPShader( PShaderID::PS_PortalDiffuse );

@@ -6,12 +6,13 @@
 #include "GothicAPI.h"
 #include "D3D11ShadowMap.h"
 #include "D3D11ShaderManager.h"
+#include <functional>
+#include <array>
 #include "D3D11TracyDebug.h"
 
 struct RenderToDepthStencilBuffer;
 
 class D3D11IndirectBuffer;
-class D3D11ConstantBuffer;
 class D3D11VertexBuffer;
 class D3D11ShaderManager;
 
@@ -41,46 +42,6 @@ const unsigned int MORPHEDMESH_HIGH_BUFFER_SIZE = 20480 * sizeof( ExVertexStruct
 const unsigned int HUD_BUFFER_SIZE = 6 * sizeof( ExVertexStruct );
 const int NUM_MAX_BONES = 96;
 const int unsigned INSTANCING_BUFFER_SIZE = sizeof( VobInstanceInfo ) * 2048;
-
-struct ConstantBufferAllocation {
-    ID3D11Buffer* pBuffer;
-    uint32_t offsetInBytes;
-    uint32_t sizeInBytes;
-
-    bool operator==( const ConstantBufferAllocation& other ) const {
-        return pBuffer == other.pBuffer && offsetInBytes == other.offsetInBytes && sizeInBytes == other.sizeInBytes;
-    }
-};
-
-class ConstantBufferPool {
-private:
-    Microsoft::WRL::ComPtr<ID3D11Buffer> m_poolBuffer;
-    uint32_t m_bufferSize;
-    uint32_t m_currentOffset;
-
-public:
-    void Initialize( ID3D11Device* device, uint32_t totalSizeInBytes = 4 * 1024 * 1024 ) {
-        m_bufferSize = totalSizeInBytes;
-        m_currentOffset = 0;
-
-        D3D11_BUFFER_DESC desc = {};
-        desc.ByteWidth = m_bufferSize;
-        desc.Usage = D3D11_USAGE_DYNAMIC;
-        desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-        desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-
-        device->CreateBuffer( &desc, nullptr, &m_poolBuffer );
-#ifdef DEBUG_D3D11
-        SetDebugName( m_poolBuffer.Get(), std::string( "ConstantBufferPool (size:" ) + std::to_string( totalSizeInBytes )+")");
-#endif
-    }
-
-    void BeginFrame();
-    ConstantBufferAllocation Allocate( ID3D11DeviceContext* context, const void* pData, uint32_t sizeInBytes );
-    void EndFrame();
-
-    ID3D11Buffer* GetBuffer() const { return m_poolBuffer.Get(); }
-};
 
 class D3D11PointLight;
 class D3D11VShader;
@@ -129,6 +90,10 @@ public:
     int GetWindowMode();
 
     XRESULT RecreateBuffers();
+
+    /** (Re-)creates or releases the Forward+ MSAA color/depth buffers based on current settings */
+    void RecreateMSAABuffers( INT2 resolution );
+
     /** Called on window resize/resolution change */
     XRESULT OnResize( INT2 newSize ) override;
 
@@ -163,7 +128,7 @@ public:
     /** Saves a screenshot */
     void SaveScreenshot() override;
 
-    void DrawString( const std::string& str, float x, float y, const zFont* font, zColor& fontColor ) override;
+    void DrawString( std::string_view str, float x, float y, const zFont* font, zColor& fontColor ) override;
 
     //virtual int MeasureString(std::string str, zFont* zFont) override;
 
@@ -171,6 +136,11 @@ public:
     XRESULT DrawVertexBuffer( D3D11VertexBuffer* vb, unsigned int numVertices, unsigned int stride = sizeof( ExVertexStruct ) ) override;
     XRESULT DrawVertexBufferIndexed( D3D11VertexBuffer* vb, D3D11VertexBuffer* ib, unsigned int numIndices, unsigned int indexOffset = 0 ) override;
     XRESULT DrawVertexBufferIndexedUINT( D3D11VertexBuffer* vb, D3D11VertexBuffer* ib, unsigned int numIndices, unsigned int indexOffset ) override;
+
+    /** Binds the wrapped world mesh's packed (36-byte / ExVertexStructGPU) vertex buffer + its
+        32-bit index buffer to the IA. Used by the world-mesh color / alpha submissions that drive
+        the packed buffer with VS_ExPacked. */
+    void BindWrappedWorldMeshPacked( MeshInfo* wrappedWorldMesh );
     XRESULT DrawDynamicVertexBufferIndexed( std::vector<ExVertexStruct>& vertices, D3D11VertexBuffer* ib, unsigned int numIndices, unsigned int indexOffset ) override;
 
     /** Draws a vertexbuffer, instanced */
@@ -186,6 +156,7 @@ public:
 
     /** Sets up a draw call for a VS_Ex-Mesh */
     void SetupVS_ExMeshDrawCall() override;
+    void PreparePerFrameConstantBuffer(VS_ExConstantBuffer_PerFrame& cb);
     void SetupVS_ExConstantBuffer() override;
     void SetupVS_ExPerInstanceConstantBuffer() override;
 
@@ -193,7 +164,8 @@ public:
     void UpdateColorSpace_SwapChain();
 
     /** Sets up texture with normalmap and fxmap for rendering */
-    bool BindTextureNRFX( zCTexture* tex, bool bindShader, bool updateMaterialInfo = true );
+    bool BindTextureNRFX( zCMaterial* mat, zCTexture* tex, bool bindShader, bool updateMaterialInfo = true );
+    bool BindTextureNRFX( zCMaterial* mat, bool bindShader, bool updateMaterialInfo = true );
 
     /** Draws a skeletal mesh */
     XRESULT DrawSkeletalVertexNormals(SkeletalVobInfo* vi, const XMFLOAT4X4& world, const std::span<XMFLOAT4X4> transforms, float4 color, float fatness =
@@ -214,7 +186,7 @@ public:
     XRESULT DrawIndexedVertexArray( ExVertexStruct* vertices, unsigned int numVertices, D3D11VertexBuffer* ib, unsigned int numIndices, unsigned int stride = sizeof( ExVertexStruct ) ) override;
 
     /** Draws a batch of instanced geometry */
-    XRESULT DrawInstanced( D3D11VertexBuffer* vb, D3D11VertexBuffer* ib, unsigned int numIndices, D3D11VertexBuffer* instanceData, unsigned int instanceDataStride, unsigned int numInstances, unsigned int vertexStride = sizeof( ExVertexStruct ), unsigned int startInstanceNum = 0, unsigned int indexOffset = 0 ) override;
+    XRESULT DrawInstanced( D3D11VertexBuffer* vb, D3D11VertexBuffer* ib, unsigned int numIndices, D3D11VertexBuffer* instanceData, unsigned int instanceDataStride, unsigned int numInstances, unsigned int vertexStride = sizeof( ExVertexStruct ), unsigned int startInstanceNum = 0, unsigned int indexOffset = 0, unsigned int instanceDataByteOffset = 0 ) override;
 
     /** Called when a vob was removed from the world */
     XRESULT OnVobRemovedFromWorld( zCVob* vob ) override;
@@ -236,6 +208,14 @@ public:
 
     /** Returns the HDRBackbuffer for regular geometry and effects */
     RenderToTextureBuffer& GetHDRBackBuffer() const { return *HDRBackBuffer; }
+
+    /** MSAA resources for the Forward+ renderer's opaque geometry pass (null/1 sample when MSAA is off or Deferred is active) */
+    RenderToTextureBuffer* GetMSAAColorBuffer() const { return MSAAColorBuffer.get(); }
+    RenderToDepthStencilBuffer* GetMSAADepthBuffer() const { return MSAADepthStencilBuffer.get(); }
+    UINT GetActiveMSAASampleCount() const { return MSAAColorBuffer ? MSAAColorBuffer->GetSampleCount() : 1; }
+
+    /** Resolves MSAADepthStencilBuffer's sample 0 into the single-sample DepthStencilBuffer via a fullscreen pixel shader (no-op if MSAA is inactive) */
+    void ResolveMSAADepth();
 
     /** Unbinds the texture at the given slot */
     XRESULT UnbindTexture( int slot ) override;
@@ -279,20 +259,23 @@ public:
     void ShadowPass_DrawWorldMesh( const std::vector<WorldMeshSectionInfo*>& visibleSections, const Frustum* cullingFrustum = nullptr );
 
     void XM_CALLCONV DrawWorldAroundForWorldShadow( FXMVECTOR position, float sectionRange, const RenderShadowmapsParams& params );
+    void DrawVegetationGeometryPass(const std::list<GVegetationBox*>& vegetationBoxes);
     void XM_CALLCONV DrawWorldAround( FXMVECTOR position,
-        float range,
-        bool cullFront = true,
-        bool indoor = false,
-        bool noNPCs = false,
-        std::list<VobInfo*>* renderedVobs = nullptr, std::list<SkeletalVobInfo*>* renderedMobs = nullptr, std::vector<std::pair<MeshKey, MeshInfo*>>* worldMeshCache = nullptr,
-        unsigned int casterMask = SHADOW_CASTER_ALL );
+                                      float range,
+                                      bool cullFront = true,
+                                      bool indoor = false,
+                                      bool noNPCs = false,
+                                      std::list<VobInfo*>* renderedVobs = nullptr, std::list<SkeletalVobInfo*>* renderedMobs = nullptr, std::vector<std::pair<MeshKey, MeshInfo*>>* worldMeshCache = nullptr,
+                                      unsigned int casterMask = SHADOW_CASTER_ALL,
+                                      const std::move_only_function<bool(const zCVob*) const>& ignoreVob = nullptr );
     void XM_CALLCONV DrawWorldAround_Layered( FXMVECTOR position,
         float range,
         bool cullFront = true,
         bool indoor = false,
         bool noNPCs = false,
         std::list<VobInfo*>* renderedVobs = nullptr, std::list<SkeletalVobInfo*>* renderedMobs = nullptr, std::vector<std::pair<MeshKey, MeshInfo*>>* worldMeshCache = nullptr,
-        unsigned int casterMask = SHADOW_CASTER_ALL );
+        unsigned int casterMask = SHADOW_CASTER_ALL,
+        const std::move_only_function<bool(const zCVob*) const>& ignoreVob = nullptr );
 
     /** Update morph mesh visual */
     void UpdateMorphMeshVisual();
@@ -324,7 +307,8 @@ public:
         bool noNPCs = false,
         std::list<VobInfo*>* renderedVobs = nullptr, std::list<SkeletalVobInfo*>* renderedMobs = nullptr, std::vector<std::pair<MeshKey, MeshInfo*>>* worldMeshCache = nullptr,
         bool clearDepth = true,
-        unsigned int casterMask = SHADOW_CASTER_ALL );
+        unsigned int casterMask = SHADOW_CASTER_ALL,
+        const std::move_only_function<bool( const zCVob* ) const>& ignoreVob = nullptr);
 
     /** Updates the occlusion for the bsp-tree */
     void UpdateOcclusion();
@@ -373,8 +357,20 @@ public:
     /** Copies the depth stencil buffer to DepthStencilBufferCopy */
     void CopyDepthStencil();
 
+    /** Adds a pass that fills an R8_UNORM screen-space AO mask (HBAO+/ASSAO/SAO per AoMode),
+        white-cleared so it reads as "no occlusion" when AO is disabled. The mask is later
+        sampled in the lighting pass and applied to indirect light only.
+        normalsResource may be RG_INVALID_HANDLE; depthOnlyNormals selects the depth-only
+        producer path (Forward+ without the smooth-normals pre-pass). Returns the mask handle. */
+    RGResourceHandle AddAOMaskPass( RenderGraph& graph, RGResourceHandle normalsResource, bool depthOnlyNormals );
+
+    /** Adds an optional compute pass that reconstructs smooth view-space normals from the
+        depth copy into a transient R16G16_FLOAT (octahedral) texture, for Forward+ AO.
+        Returns the normals handle. */
+    RGResourceHandle AddAONormalsFromDepthPass( RenderGraph& graph );
+
     /** Draws particle meshes */
-    void DrawFrameParticleMeshes( std::unordered_map<zCVob*, MeshVisualInfo*>& progMeshes ) override;
+    void DrawFrameParticleMeshes( std::unordered_map<zCVob*, std::unique_ptr<MeshVisualInfo>>& progMeshes ) override;
 
     /** Draws particle effects */
     void DrawFrameParticles(std::map<zCTexture*, std::vector<ParticleInstanceInfo>>& particles, std::map<zCTexture*, ParticleRenderInfo>& info, RenderToTextureBuffer
@@ -400,6 +396,43 @@ public:
     std::unique_ptr<D3D11Effect> Effects;
 
     D3D11PfxRenderer* GetPfxRenderer() const { return PfxRenderer.get(); }
+
+    // --- Per-frame dynamic constant-buffer ring API ----------------------
+    // For small per-draw/per-object/per-frame CBs (grass, view-distances, Forward+
+    // sun/tile/atmosphere, TAA, point-light cubemap view matrices, ...). Each call
+    // sub-allocates a transient slot from a per-frame ring (DYNAMIC buffer mapped
+    // with DISCARD/NO_OVERWRITE) and binds it by offset, so callers don't need their
+    // own ID3D11Buffer. The allocation is only valid for the current frame.
+    ConstantBufferAllocation AllocateDynamicCB( const void* data, uint32_t size ) {
+        return DynamicConstantBufferPool->Allocate( data, size );
+    }
+    
+    template<typename T>
+        requires (!std::is_pointer_v<T> && std::is_trivially_copyable_v<T>)
+    ConstantBufferAllocation AllocateDynamicCB( const T* data ) {
+        return DynamicConstantBufferPool->Allocate( data, sizeof(T) );
+    }
+    
+    ConstantBufferPool* GetConstantBufferPool() override {
+        return DynamicConstantBufferPool.get();
+    };
+    
+    void BindDynamicCBToVertexShader( int slot, const ConstantBufferAllocation& a ) {
+        if ( slot < 0 || !a.pBuffer ) return;
+        UINT first = a.offsetInBytes / 16; UINT num = a.sizeInBytes / 16;
+        GetContext()->VSSetConstantBuffers1( static_cast<UINT>( slot ), 1, &a.pBuffer, &first, &num );
+    }
+    void BindDynamicCBToPixelShader( int slot, const ConstantBufferAllocation& a ) {
+        if ( slot < 0 || !a.pBuffer ) return;
+        UINT first = a.offsetInBytes / 16; UINT num = a.sizeInBytes / 16;
+        GetContext()->PSSetConstantBuffers1( static_cast<UINT>( slot ), 1, &a.pBuffer, &first, &num );
+    }
+    void BindDynamicCBToGeometryShader( int slot, const ConstantBufferAllocation& a ) {
+        if ( slot < 0 || !a.pBuffer ) return;
+        UINT first = a.offsetInBytes / 16; UINT num = a.sizeInBytes / 16;
+        GetContext()->GSSetConstantBuffers1( static_cast<UINT>( slot ), 1, &a.pBuffer, &first, &num );
+    }
+
     D3D11Texture* GetDistortionTexture() const { return DistortionTexture.get(); }
     D3D11Texture* GetBlueNoiseTexture() const { return BlueNoise512BGRA.get(); }
     D3D11Texture* GetWhiteTexture() const { return WhiteTexture.get(); }
@@ -424,27 +457,54 @@ public:
     }
 
 private:
-    struct FrameIndirectBufferPool {
-        std::vector<std::unique_ptr<D3D11IndirectBuffer>> Buffers;
-        size_t NextBuffer = 0;
+    // Ring of FrameCount slots, one used per frame-in-flight - mirrors ConstantBufferPool's
+    // design. Each slot owns one growable buffer plus an ID3D11Query fence; BeginFrame() waits
+    // on the fence of the slot it's about to reuse (guaranteeing the GPU is done reading whatever
+    // that slot held FrameCount frames ago) so every sub-allocation can use NO_OVERWRITE instead
+    // of relying on MAP_DISCARD to rename the backing allocation.
+    static constexpr uint32_t kTransientPoolFrameCount = 3;
 
-        void ResetFrame() {
-            NextBuffer = 0;
-        }
+    struct FrameIndirectBufferPool {
+        struct Slot {
+            std::unique_ptr<D3D11IndirectBuffer> Buffer;
+            Microsoft::WRL::ComPtr<ID3D11Query> Fence;
+            bool FencePending = false;
+            uint32_t Capacity = 0;
+            uint32_t Offset = 0;
+        };
+
+        std::array<Slot, kTransientPoolFrameCount> Slots;
+        uint32_t FrameIndex = 0;
     };
 
     struct FrameInstancingBufferPool {
-        std::vector<std::unique_ptr<D3D11VertexBuffer>> Buffers;
-        size_t NextBuffer = 0;
+        struct Slot {
+            std::unique_ptr<D3D11VertexBuffer> Buffer;
+            Microsoft::WRL::ComPtr<ID3D11Query> Fence;
+            bool FencePending = false;
+            uint32_t Capacity = 0;
+            uint32_t Offset = 0;
+        };
 
-        void ResetFrame() {
-            NextBuffer = 0;
-        }
+        std::array<Slot, kTransientPoolFrameCount> Slots;
+        uint32_t FrameIndex = 0;
     };
 
-    void ResetFrameTransientBufferPools();
-    D3D11IndirectBuffer* AcquireFrameIndirectBuffer( FrameIndirectBufferPool& pool, const void* initData, unsigned int sizeInBytes, const char* debugName );
-    D3D11VertexBuffer* AcquireFrameInstancingBuffer( FrameInstancingBufferPool& pool, unsigned int sizeInBytes, const char* debugName );
+    struct FrameIndirectAllocation {
+        D3D11IndirectBuffer* Buffer = nullptr;
+        uint32_t OffsetInBytes = 0;
+    };
+
+    struct FrameInstancingAllocation {
+        D3D11VertexBuffer* Buffer = nullptr;
+        uint32_t OffsetInBytes = 0;
+    };
+
+    void BeginFrameTransientBufferPools();
+    void EndFrameTransientBufferPools();
+    void WaitForTransientPoolFence( Microsoft::WRL::ComPtr<ID3D11Query>& fence, bool& fencePending );
+    FrameIndirectAllocation AcquireFrameIndirectAllocation( FrameIndirectBufferPool& pool, const void* initData, unsigned int sizeInBytes, const char* debugName );
+    FrameInstancingAllocation AcquireFrameInstancingAllocation( FrameInstancingBufferPool& pool, unsigned int sizeInBytes, const char* debugName );
 
 protected:
 
@@ -475,7 +535,6 @@ protected:
     /** Temp-Arrays for storing data to be put in constant buffers */
     float2 Temp2Float2[2];
     std::unique_ptr<D3D11VertexBuffer> DynamicInstancingBuffer;
-    std::unique_ptr<D3D11VertexBuffer> NodeAttachmentInstancingBuffer;
     std::unique_ptr<D3D11VertexBuffer> DecalInstancingBuffer;
     std::unique_ptr<D3D11VertexBuffer> DynamicVertexBuffer;
 
@@ -486,6 +545,7 @@ protected:
     std::unique_ptr<D3D11Texture> DistortionTexture;
     std::unique_ptr<D3D11Texture> NoiseTexture;
     std::unique_ptr<D3D11Texture> WhiteTexture;
+    std::unique_ptr<D3D11Texture> BlackTexture;
     std::unique_ptr<D3D11Texture> BlueNoise512BGRA;
 
     /** Shadowing */
@@ -598,39 +658,63 @@ private:
             MeshInfo* MeshEntry = nullptr;
         };
 
+        /// Snapshot of one texture/mesh instanced-draw batch built while collecting
+        /// node attachments, so a later stage in the same frame (e.g. the lit pass
+        /// reusing the Z-prepass' work) can replay it without rebuilding.
+        struct CachedNodeAttachmentBatch {
+            MeshInfo* Mesh = nullptr;
+            zCTexture* Texture = nullptr;
+            zCMaterial* Material = nullptr;
+            unsigned int StartInstance = 0;
+            unsigned int InstanceCount = 0;
+            bool NeedAlpha = false;
+        };
+
         bool worldMeshBuilt    = false;  ///< CollectVisibleSections + MDI arg build + buffer upload done
         bool vobInstancesUploaded = false; ///< CollectVisibleVobs + DynamicInstancingBuffer upload done
         bool vobWindMetadataPrepared = false; ///< Wind metadata prepared for cached vob visuals
         bool skeletalBonesUploaded = false; ///< FL11 packed skeletal bone buffers uploaded for main/z-prepass reuse
+        bool nodeAttachmentInstancesUploaded = false; ///< Node-attachment instance buffer uploaded for main/z-prepass reuse
 
         std::vector<WorldMeshSectionInfo*> visibleSections;
         std::vector<D3D11_DRAW_INDEXED_INSTANCED_INDIRECT_ARGS> drawIndirectArgs;
         std::vector<CachedWorldMeshDraw> sortedDepthWorldMeshes;
         D3D11IndirectBuffer*           MainWorldIndirectArgsBuffer = nullptr;
         D3D11VertexBuffer*             MainVobInstancingBuffer = nullptr;
+        uint32_t                       MainVobInstancingBufferOffset = 0; ///< byte offset of this frame's sub-allocation within MainVobInstancingBuffer
         std::vector<VobWindMetadata>   vobWindMetadata;
         std::vector<CachedVobVisual>    vobVisuals;
         std::vector<CachedInstancedMeshDraw> sortedInstancedMeshes;
         std::vector<SkeletalVobInfo*>   cachedMobs;
         std::vector<SkeletalVobInfo*> skeletalBoneVisOrder;
         std::vector<VS_ExConstantBuffer_SkeletalBoneRange> skeletalBoneRanges;
+        std::vector<SkeletalVobInfo*> nodeAttachmentVisOrder;
+        std::vector<CachedNodeAttachmentBatch> nodeAttachmentBatches;
+        D3D11VertexBuffer*             NodeAttachmentInstancingBuffer = nullptr;
+        uint32_t                       NodeAttachmentInstancingBufferOffset = 0; ///< byte offset of this frame's sub-allocation within NodeAttachmentInstancingBuffer
 
         void Reset() {
             worldMeshBuilt      = false;
             vobInstancesUploaded = false;
             vobWindMetadataPrepared = false;
             skeletalBonesUploaded = false;
+            nodeAttachmentInstancesUploaded = false;
             visibleSections.clear();
             drawIndirectArgs.clear();
             sortedDepthWorldMeshes.clear();
             MainWorldIndirectArgsBuffer = nullptr;
             MainVobInstancingBuffer = nullptr;
+            MainVobInstancingBufferOffset = 0;
             vobWindMetadata.clear();
             vobVisuals.clear();
             sortedInstancedMeshes.clear();
             cachedMobs.clear();
             skeletalBoneVisOrder.clear();
             skeletalBoneRanges.clear();
+            nodeAttachmentVisOrder.clear();
+            nodeAttachmentBatches.clear();
+            NodeAttachmentInstancingBuffer = nullptr;
+            NodeAttachmentInstancingBufferOffset = 0;
         }
     };
     FrameGeometryCache m_FrameGeometryCache;
@@ -639,6 +723,8 @@ private:
     FrameIndirectBufferPool m_ShadowWorldIndirectPool;
     FrameInstancingBufferPool m_MainVobInstancingPool;
     FrameInstancingBufferPool m_ShadowVobInstancingPool;
+    FrameInstancingBufferPool m_MainNodeAttachmentInstancingPool;
+    FrameInstancingBufferPool m_ShadowNodeAttachmentInstancingPool;
 
     /** Water surface indirect buffer */
     std::unique_ptr<D3D11IndirectBuffer> WaterIndirectBuffer;
@@ -654,15 +740,27 @@ private:
     /** Cached bone transforms for batched skeletal mesh drawing */
     std::vector<XMFLOAT4X4> BoneTransformCache;
 
-    /** Constantbuffers for view-distances */
-    std::unique_ptr<D3D11ConstantBuffer> InfiniteRangeConstantBuffer;
-    std::unique_ptr<D3D11ConstantBuffer> OutdoorSmallVobsConstantBuffer;
-    std::unique_ptr<D3D11ConstantBuffer> OutdoorVobsConstantBuffer;
+    /** View-distance constant buffers. These are re-allocated from the per-frame
+        dynamic ring each frame (bound at many draw sites, updated rarely), so the
+        allocation handle is kept between the frame-start update and the binds. */
+    ConstantBufferAllocation InfiniteRangeCB;
+    ConstantBufferAllocation OutdoorSmallVobsCB;
+    ConstantBufferAllocation OutdoorVobsCB;
     std::unique_ptr<ConstantBufferPool> PerObjectMaterialInfoPooledBuffer;
 
+    /** Last MaterialInfo whose constant buffer is known to be bound. Reset to nullptr
+        at the start of DrawVOBsInstanced, DrawSkeletalMeshVobs and DrawWorldMesh, since
+        we can't otherwise be sure what any given draw path last bound. Checked via
+        MaterialInfo::IsSame() to skip re-allocating/re-binding an identical buffer. */
+    MaterialInfo* m_LastMaterialInfo = nullptr;
+
+    /** Per-frame ring for small per-draw/per-object dynamic constant buffers
+        (grass, and other buffers migrated off their own ID3D11Buffer). */
+    std::unique_ptr<ConstantBufferPool> DynamicConstantBufferPool;
+
     /** Quads for decals/particles */
-    D3D11VertexBuffer* QuadVertexBuffer;
-    D3D11VertexBuffer* QuadIndexBuffer;
+    std::unique_ptr<D3D11VertexBuffer> QuadVertexBuffer;
+    std::unique_ptr<D3D11VertexBuffer> QuadIndexBuffer;
 
     /** Occlusion query manager */
     std::unique_ptr<D3D11OcclusionQuerry> Occlusion;

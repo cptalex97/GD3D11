@@ -76,6 +76,7 @@ ImGuiEditorView::ImGuiEditorView() {
     MainTabIndex = 0;
     SelectionTabIndex = 0;
     ShowVobSettingsDialog = false;
+    ShowMaterialInfoDialog = false;
 
     Widgets = new WidgetContainer;
 }
@@ -91,9 +92,7 @@ void ImGuiEditorView::Render() {
 
     RenderMainPanel();
 
-    if (ShowVobSettingsDialog) {
-        RenderVobSettingsDialog();
-    }
+    RenderVobSettingsDialog();
 }
 
 void ImGuiEditorView::RenderMainPanel() {
@@ -195,7 +194,7 @@ void ImGuiEditorView::RenderVegetationTab() {
             LogInfo() << "Filling selected mesh with vegetation";
 
             GVegetationBox* box = new GVegetationBox;
-            if (XR_SUCCESS == box->InitVegetationBox(Selection.SelectedMesh, "", 1.0f, 1.0f, Selection.SelectedMaterial->GetTexture())) {
+            if (XR_SUCCESS == box->InitVegetationBox(Selection.SelectedMesh, "", 1.0f, 1.0f, Selection.SelectedMaterial->GetTextureSingle())) {
                 Engine::GAPI->AddVegetationBox(box);
             } else {
                 delete box;
@@ -245,51 +244,52 @@ void ImGuiEditorView::RenderTextureSelectionPanel() {
     }
 
     // Texture name
-    if (Selection.SelectedMaterial && Selection.SelectedMaterial->GetTexture()) {
-        ImGui::Text("%s", Selection.SelectedMaterial->GetTexture()->GetNameWithoutExt().c_str());
+    if (Selection.SelectedMaterial && Selection.SelectedMaterial->GetTextureSingle()) {
+        ImGui::TextUnformatted(Selection.SelectedMaterial->GetTextureSingle()->GetNameWithoutExt().c_str());
     } else {
-        ImGui::Text("No texture selected");
+        ImGui::TextUnformatted("No texture selected");
     }
 
     ImGui::Separator();
 
     // Texture properties
-    ImGui::Text("Normalmap:");
+    bool matChanged = false;
+    ImGui::TextUnformatted("Normalmap:");
     ImGui::SameLine(80);
     if (ImGui::SliderFloat("##NrmStr", &SelectedTexNrmStr, -2.0f, 2.0f, "%.2f")) {
-        if (Selection.SelectedMaterial && Selection.SelectedMaterial->GetTexture()) {
-            MaterialInfo* info = Engine::GAPI->GetMaterialInfoFrom(Selection.SelectedMaterial->GetTexture());
-            if (info) {
-                info->buffer.NormalmapStrength = SelectedTexNrmStr;
-                info->WriteToFile(Selection.SelectedMaterial->GetTexture()->GetNameWithoutExt());
-            }
-        }
+        matChanged = true;
     }
 
-    ImGui::Text("Spec intens:");
+    ImGui::TextUnformatted("Spec intens:");
     ImGui::SameLine(80);
     if (ImGui::SliderFloat("##SpecIntens", &SelectedTexSpecIntens, 0.0f, 5.0f, "%.2f")) {
-        if (Selection.SelectedMaterial && Selection.SelectedMaterial->GetTexture()) {
-            MaterialInfo* info = Engine::GAPI->GetMaterialInfoFrom(Selection.SelectedMaterial->GetTexture());
-            if (info) {
-                info->buffer.SpecularIntensity = SelectedTexSpecIntens;
-                info->WriteToFile(Selection.SelectedMaterial->GetTexture()->GetNameWithoutExt());
-            }
-        }
+        matChanged = true;
     }
 
-    ImGui::Text("Spec power:");
+    ImGui::TextUnformatted("Spec power:");
     ImGui::SameLine(80);
     if (ImGui::SliderFloat("##SpecPower", &SelectedTexSpecPower, 0.1f, 200.0f, "%.1f")) {
-        if (Selection.SelectedMaterial && Selection.SelectedMaterial->GetTexture()) {
-            MaterialInfo* info = Engine::GAPI->GetMaterialInfoFrom(Selection.SelectedMaterial->GetTexture());
+        matChanged = true;
+    }
+    
+    if (matChanged) {
+        if (Selection.SelectedMaterial && Selection.SelectedMaterial->GetTextureSingle()) {
+            MaterialInfo* info = Engine::GAPI->GetMaterialInfoFrom(Selection.SelectedMaterial);
             if (info) {
+                info->buffer.NormalmapStrength = SelectedTexNrmStr;
+                info->buffer.SpecularIntensity = SelectedTexSpecIntens;
                 info->buffer.SpecularPower = SelectedTexSpecPower;
-                info->WriteToFile(Selection.SelectedMaterial->GetTexture()->GetNameWithoutExt());
+                
+                auto matName = Selection.SelectedMaterial->GetNameView();
+                if (matName.empty()) {
+                    matName = Selection.SelectedMaterial->GetTextureSingle()->GetNameWithoutExt();
+                }
+                info->WriteToFile(Selection.SelectedMaterial->GetTextureSingle()->GetNameWithoutExt());
             }
         }
     }
 
+    /* per (World) Mesh settings are obsolete and not used. (tesselation  etc.) 
     ImGui::Separator();
     ImGui::Text("WorldMesh-Settings:");
 
@@ -307,6 +307,7 @@ void ImGuiEditorView::RenderTextureSelectionPanel() {
 
     ImGui::Spacing();
     ImGui::TextWrapped("Press Space to subdivide the selected surface. (Not saved yet)");
+    */
 }
 
 void ImGuiEditorView::RenderVegetationSelectionPanel() {
@@ -350,21 +351,58 @@ void ImGuiEditorView::RenderVegetationSelectionPanel() {
 }
 
 void ImGuiEditorView::RenderVobSettingsDialog() {
-    ImGui::SetNextWindowPos(ImVec2(320, 10), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(300, 400), ImGuiCond_FirstUseEver);
-
-    if (ImGui::Begin("Vob Settings", &ShowVobSettingsDialog, ImGuiWindowFlags_NoCollapse)) {
-        if (Selection.SelectedVobInfo) {
-            ImGui::Text("Vob: %s", Selection.SelectedVobInfo->Vob->GetName().c_str());
-            // Add more vob settings here as needed
-        } else if (Selection.SelectedSkeletalVob) {
-            ImGui::Text("Skeletal Vob: %s", Selection.SelectedSkeletalVob->Vob->GetName().c_str());
-            // Add more skeletal vob settings here as needed
-        } else {
-            ImGui::Text("No vob selected");
+    
+    if (Selection.SelectedVobInfo || Selection.SelectedSkeletalVob) {
+        ImGui::SetNextWindowPos(ImVec2(320, 10), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(300, 400), ImGuiCond_FirstUseEver);
+        if (ImGui::Begin("Vob Settings", &ShowVobSettingsDialog, ImGuiWindowFlags_NoCollapse)) {
+            if (Selection.SelectedVobInfo) {
+                ImGui::Text("Vob: %s", Selection.SelectedVobInfo->Vob->GetName().c_str());
+                // Add more vob settings here as needed
+            } else if (Selection.SelectedSkeletalVob) {
+                ImGui::Text("Skeletal Vob: %s", Selection.SelectedSkeletalVob->Vob->GetName().c_str());
+                // Add more skeletal vob settings here as needed
+            } else {
+                ImGui::Text("No vob selected");
+            }
         }
+        ImGui::End();
     }
-    ImGui::End();
+    if (Selection.SelectedMaterial) {
+        ImGui::SetNextWindowPos(ImVec2(320, 10), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(300, 400), ImGuiCond_FirstUseEver);
+        if (ImGui::Begin("Material Info", &ShowMaterialInfoDialog, ImGuiWindowFlags_NoCollapse)) {
+            const auto mat = Selection.SelectedMaterial;
+            static std::string builder = "__________________________________________________";
+
+            ImGui::Text("%s: %s", "Name", mat->__GetName().Length() ? mat->__GetName().ToChar() : "<NO NAME>");
+            builder.clear();
+            builder.append(magic_enum::enum_name(static_cast<zTMat_Group>(mat->GetMatGroup())));
+            ImGui::Text("%s: %s", "Group", builder.c_str());
+            builder.clear();
+            builder.append(magic_enum::enum_name(mat->GetWaveMode()));
+            ImGui::Text("%s: %s", "Wave Mode", builder.c_str());
+            ImGui::Text("%s: %f", "Wave Speed", mat->GetWaveSpeed());
+            ImGui::Text("%s: %f", "Wave Max Amplitude", mat->GetWaveMaxAmplitude());
+            ImGui::SeparatorText("Flags");
+            const auto& flags = mat->GetFlags();
+            ImGui::Text("%s: %d", "smooth", flags.smooth);
+            ImGui::Text("%s: %d", "dontUseLightmaps", flags.dontUseLightmaps);
+            ImGui::Text("%s: %d", "texAniMap", flags.texAniMap);
+            ImGui::Text("%s: %d", "lodDontCollapse", flags.lodDontCollapse);
+            ImGui::Text("%s: %d", "noCollDet", flags.noCollDet);
+            ImGui::Text("%s: %d", "forceOccluder", flags.forceOccluder);
+            ImGui::Text("%s: %d", "m_bEnvironmentalMapping", flags.m_bEnvironmentalMapping);
+            ImGui::Text("%s: %d", "polyListNeedsSort", flags.polyListNeedsSort);
+            ImGui::Text("%s: %d", "matUsage", flags.matUsage);
+            ImGui::Text("%s: %d", "libFlag", flags.libFlag);
+            builder.clear();
+            builder.append(magic_enum::enum_name(flags.rndAlphaBlendFunc));
+            ImGui::Text("%s: %s", "rndAlphaBlendFunc", builder.c_str());
+            ImGui::Text("%s: %d", "m_bIgnoreSun", flags.m_bIgnoreSun);
+        }
+        ImGui::End();
+    }
 }
 
 void ImGuiEditorView::Update(float deltaTime) {
@@ -621,7 +659,7 @@ void ImGuiEditorView::DoSelection() {
         if (Selection.SelectedVobInfo != TracedVobInfo && hitMaterialVob) {
             XMFLOAT4X4 world;
             XMStoreFloat4x4(&world, XMMatrixTranspose(XMLoadFloat4x4(TracedVobInfo->Vob->GetWorldMatrixPtr())));
-            VisualizeMeshInfo(TracedVobInfo->VisualInfo->Meshes[hitMaterialVob][0], XMFLOAT4(1, 1, 1, 1), false, &world);
+            VisualizeMeshInfo(TracedVobInfo->VisualInfo->Meshes[hitMaterialVob][0].get(), XMFLOAT4(1, 1, 1, 1), false, &world);
         }
 
         return;
@@ -633,9 +671,9 @@ void ImGuiEditorView::VisualizeMeshInfo(MeshInfo* m, const XMFLOAT4& color, bool
         XMFLOAT3 tri[3];
         float edge[3];
 
-        tri[0] = *m->Vertices[m->Indices[i]].Position.toXMFLOAT3();
-        tri[1] = *m->Vertices[m->Indices[i + 1]].Position.toXMFLOAT3();
-        tri[2] = *m->Vertices[m->Indices[i + 2]].Position.toXMFLOAT3();
+        tri[0] = m->Vertices[m->Indices[i]].Position;
+        tri[1] = m->Vertices[m->Indices[i + 1]].Position;
+        tri[2] = m->Vertices[m->Indices[i + 2]].Position;
 
         edge[0] = m->Vertices[m->Indices[i]].TexCoord2.x;
         edge[1] = m->Vertices[m->Indices[i + 1]].TexCoord2.x;
@@ -755,8 +793,11 @@ void ImGuiEditorView::OnMouseClick(int button) {
 
 void ImGuiEditorView::UpdateSelectionPanel() {
     // Update selection panel
-    if (Selection.SelectedMaterial && Selection.SelectedMaterial->GetTexture()) {
-        auto tx = Selection.SelectedMaterial->GetTexture();
+    ShowMaterialInfoDialog = Selection.SelectedMaterial != nullptr;
+    ShowVobSettingsDialog = Selection.SelectedSkeletalVob != nullptr || Selection.SelectedVobInfo != nullptr;
+    
+    if (Selection.SelectedMaterial && Selection.SelectedMaterial->GetTextureSingle()) {
+        auto tx = Selection.SelectedMaterial->GetTextureSingle();
         // Select preferred texture for the texture settings
         // Engine::AntTweakBar->SetPreferredTextureForSettings(tx->GetNameWithoutExt());
 
@@ -777,7 +818,7 @@ void ImGuiEditorView::UpdateSelectionPanel() {
         }
 
         // Load texture settings
-        MaterialInfo* info = Engine::GAPI->GetMaterialInfoFrom(tx);
+        MaterialInfo* info = Engine::GAPI->GetMaterialInfoFrom(Selection.SelectedMaterial);
         if (info) {
             SelectedTexNrmStr = info->buffer.NormalmapStrength;
             SelectedTexSpecIntens = info->buffer.SpecularIntensity;
@@ -990,7 +1031,7 @@ bool ImGuiEditorView::OnWindowMessage(HWND hWnd, unsigned int msg, WPARAM wParam
             TracedSkeletalVobInfo = nullptr;
             SetEditorMode(EM_IDLE);
         }
-        if (wParam == VK_DELETE) {
+        if (wParam == VK_DELETE && !io.WantCaptureKeyboard) {
             OnDelete();
         }
         break;
@@ -1126,7 +1167,7 @@ void ImGuiEditorView::OnDelete() {
         return;
     }
 
-    if (Selection.SelectedMesh && Selection.SelectedMaterial && Selection.SelectedMaterial->GetTexture()) {
+    if (Selection.SelectedMesh && Selection.SelectedMaterial && Selection.SelectedMaterial->GetTextureSingle()) {
         // Find the section of this mesh
         FXMVECTOR Position0 = XMVectorSet(Selection.SelectedMesh->Vertices[0].Position.x, Selection.SelectedMesh->Vertices[0].Position.y, Selection.SelectedMesh->Vertices[0].Position.z, 0);
         FXMVECTOR Position1 = XMVectorSet(Selection.SelectedMesh->Vertices[1].Position.x, Selection.SelectedMesh->Vertices[1].Position.y, Selection.SelectedMesh->Vertices[1].Position.z, 0);
@@ -1138,7 +1179,7 @@ void ImGuiEditorView::OnDelete() {
         WorldMeshSectionInfo* section = &Engine::GAPI->GetWorldSections()[s.x][s.y];
 
         // Remove the texture from rendering
-        Engine::GAPI->SupressTexture(section, Selection.SelectedMaterial->GetTexture()->GetNameWithoutExt());
+        Engine::GAPI->SupressTexture(section, Selection.SelectedMaterial->GetTextureSingle()->GetNameWithoutExt());
     }
 
     SelectionTabIndex = 0; // Texture tab

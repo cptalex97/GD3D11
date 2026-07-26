@@ -4,7 +4,6 @@
 
 #include "pch.h"
 #include "GothicGraphicsState.h"
-#include "D3D11ConstantBuffer.h"
 #include "D3D11Texture.h"
 #include "zTypes.h"
 #include "ConstantBufferStructs.h"
@@ -79,6 +78,7 @@ struct meshKeyHasher {
 struct MeshInfo {
     MeshInfo() {
         MeshVertexBuffer = nullptr;
+        MeshPositionBuffer = nullptr;
         MeshIndexBuffer = nullptr;
         MeshShadowIndexBuffer = nullptr;
         BaseIndexLocation = 0;
@@ -96,9 +96,18 @@ struct MeshInfo {
     /** Creates buffers for this mesh info */
     XRESULT Create( ExVertexStruct* vertices, unsigned int numVertices, VERTEX_INDEX* indices, unsigned int numIndices );
 
-    D3D11VertexBuffer* MeshVertexBuffer;
-    D3D11VertexBuffer* MeshIndexBuffer;
-    D3D11VertexBuffer* MeshShadowIndexBuffer;
+    D3D11VertexBuffer* GetMeshVertexBuffer() const { return MeshVertexBuffer.get(); }
+    D3D11VertexBuffer* GetMeshPositionBuffer() const { return MeshPositionBuffer.get(); }
+    D3D11VertexBuffer* GetMeshIndexBuffer() const { return MeshIndexBuffer.get(); }
+    D3D11VertexBuffer* GetMeshShadowIndexBuffer() const { return MeshShadowIndexBuffer.get(); }
+    
+    std::unique_ptr<D3D11VertexBuffer> MeshVertexBuffer;
+    // Optional position-only (float3, 12 bytes) copy of MeshVertexBuffer, in the same vertex
+    // ordering. Bound for opaque depth/shadow passes to cut vertex-fetch bandwidth (~3.6x vs the
+    // full 44-byte stream). Currently only populated for the wrapped world mesh. May be nullptr.
+    std::unique_ptr<D3D11VertexBuffer> MeshPositionBuffer;
+    std::unique_ptr<D3D11VertexBuffer> MeshIndexBuffer;
+    std::unique_ptr<D3D11VertexBuffer> MeshShadowIndexBuffer;
     std::vector<ExVertexStruct> Vertices;
     std::vector<VERTEX_INDEX> Indices;
     std::vector<VERTEX_INDEX> ShadowIndices;
@@ -151,8 +160,8 @@ struct SkeletalMeshInfo {
 
     ~SkeletalMeshInfo();
 
-    D3D11VertexBuffer* MeshVertexBuffer;
-    D3D11VertexBuffer* MeshIndexBuffer;
+    std::unique_ptr<D3D11VertexBuffer> MeshVertexBuffer;
+    std::unique_ptr<D3D11VertexBuffer> MeshIndexBuffer;
     std::vector<ExSkelVertexStruct> Vertices;
     std::vector<VERTEX_INDEX> Indices;
 
@@ -170,21 +179,18 @@ struct BaseVisualInfo {
         MidPoint{},
         Visual{},
         VisualName{}
-    {};
-    BaseVisualInfo(BaseVisualInfo&& other) = default;
+    {}
+
+    BaseVisualInfo(BaseVisualInfo&& other) noexcept = default;
     BaseVisualInfo& operator=( BaseVisualInfo&& ) noexcept = default;
     BaseVisualInfo(const BaseVisualInfo& other) = delete;
     BaseVisualInfo& operator=(const BaseVisualInfo& other) = delete;
 
     virtual ~BaseVisualInfo() {
-        for ( auto& [k, meshes] : Meshes ) {
-            for ( MeshInfo* mi : meshes ) {
-                delete mi;
-            }
-        }
+        Meshes.clear();
     }
 
-    std::map<zCMaterial*, std::vector<MeshInfo*>> Meshes;
+    std::map<zCMaterial*, std::vector<std::unique_ptr<MeshInfo>>> Meshes;
 
     /** "size" of the mesh. The distance between it's bbox min and bbox max */
     float MeshSize;
@@ -258,38 +264,29 @@ struct MeshVisualInfo : public BaseVisualInfo {
 class zCMeshSoftSkin;
 class zCModel;
 struct SkeletalMeshVisualInfo : public BaseVisualInfo {
-    SkeletalMeshVisualInfo() :
-        SkeletalMeshes{}
-    {};
-    SkeletalMeshVisualInfo(SkeletalMeshVisualInfo&& other) = default;
+    SkeletalMeshVisualInfo()
+    {
+        SkeletalMeshes.clear();
+        Meshes.clear();
+    }
+
+    SkeletalMeshVisualInfo(SkeletalMeshVisualInfo&& other) noexcept = default;
     SkeletalMeshVisualInfo& operator=( SkeletalMeshVisualInfo&& ) = default;
     SkeletalMeshVisualInfo(const SkeletalMeshVisualInfo& other) = delete;
     SkeletalMeshVisualInfo& operator=(const SkeletalMeshVisualInfo& other) = delete;
     
     ~SkeletalMeshVisualInfo() override
     {
-        for ( auto& [k, meshes] : SkeletalMeshes ) {
-            for ( SkeletalMeshInfo* smi : meshes ) {
-                delete smi;
-            }
-        }
+        SkeletalMeshes.clear();
     }
 
     void ClearMeshes() {
-        for ( auto& [k, meshes] : SkeletalMeshes )
-            for ( SkeletalMeshInfo* smi : meshes )
-                delete smi;
-
-        for ( auto& [k, meshes] : Meshes )
-            for ( MeshInfo* mi : meshes )
-                delete mi;
-
         SkeletalMeshes.clear();
         Meshes.clear();
     }
 
     /** Submeshes of this visual */
-    std::map<zCMaterial*, std::vector<SkeletalMeshInfo*>> SkeletalMeshes;
+    std::map<zCMaterial*, std::vector<std::unique_ptr<SkeletalMeshInfo>>> SkeletalMeshes;
 };
 
 struct BaseVobInfo {

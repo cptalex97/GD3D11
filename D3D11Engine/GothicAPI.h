@@ -176,7 +176,7 @@ struct CameraReplacement {
 };
 
 /** Version of this struct */
-const int MATERIALINFO_VERSION = 5;
+const int MATERIALINFO_VERSION = 6;
 
 struct MaterialInfo {
     enum EMaterialType {
@@ -192,11 +192,7 @@ struct MaterialInfo {
         PixelShader(static_cast<PShaderID>(0)),
         MaterialType(MT_None)
     {
-        buffer.SpecularIntensity = 0.1f;
-        buffer.SpecularPower = 60.0f;
-        buffer.NormalmapStrength = 1.0f;
-        buffer.DisplacementFactor = 1.0f;
-        buffer.Color = 0xFFFFFFFF;
+        buffer.SetDefault();
     }
 
     ~MaterialInfo() = default;
@@ -208,7 +204,7 @@ struct MaterialInfo {
     MaterialInfo& operator=( const MaterialInfo& ) = delete;
 
     /** Writes this info to a file */
-    void WriteToFile( const std::string& name );
+    void WriteToFile( const std::string_view name );
 
     /** Loads this info from a file */
     void LoadFromFile( const std::string_view name );
@@ -220,11 +216,26 @@ struct MaterialInfo {
         float DisplacementFactor;
         float4 Color;
 
+        void SetDefault() {
+            // -- Defaults for NON Normalmapped, NON FX-Mapped materials
+            SpecularIntensity = 0.1f;
+            SpecularPower = 5.0f;
+            // ---
+            
+            NormalmapStrength = 1.0f;
+            DisplacementFactor = 0.1f;
+            Color = 0xFFFFFFFF;
+        }
+
+        static bool FloatEqualEps(float a, float b, float epsilon = 0.0001f) noexcept{
+            return std::abs(a - b) <= epsilon;
+        }
+        
         bool operator==( const Buffer& other ) const noexcept {
-            return SpecularIntensity == other.SpecularIntensity &&
-                SpecularPower == other.SpecularPower &&
-                NormalmapStrength == other.NormalmapStrength &&
-                DisplacementFactor == other.DisplacementFactor &&
+            return FloatEqualEps(SpecularIntensity, other.SpecularIntensity) &&
+                FloatEqualEps(SpecularPower, other.SpecularPower) &&
+                FloatEqualEps(NormalmapStrength, other.NormalmapStrength) &&
+                FloatEqualEps(DisplacementFactor, other.DisplacementFactor) &&
                 Color == other.Color;
         }
     };
@@ -233,7 +244,7 @@ struct MaterialInfo {
     EMaterialType MaterialType;
     Buffer buffer;
 
-    bool IsSame( MaterialInfo* other ) {
+    bool IsSame(const MaterialInfo* other ) const {
         if ( other == nullptr ) return false;
         return PixelShader == other->PixelShader
             && MaterialType == other->MaterialType
@@ -363,9 +374,9 @@ public:
     void DrawWorldMeshNaive();
 
     /** Draws a skeletal mesh-vob */
-    void DrawSkeletalMeshVob( SkeletalVobInfo* vi, float distance, bool updateState = true );
+    void DrawSkeletalMeshVob( SkeletalVobInfo* vi, float distance, bool updateState = true, const std::move_only_function<bool( const zCVob* ) const>& ignoreVob = nullptr );
 
-    void DrawSkeletalMeshVob_Layered( SkeletalVobInfo* vi, float distance, bool updateState = true );
+    void DrawSkeletalMeshVob_Layered( SkeletalVobInfo* vi, float distance, bool updateState = true, const std::move_only_function<bool( const zCVob* ) const>& ignoreVob = nullptr );
 
     void DrawTransparencyVobs();
     void DrawSkeletalVN();
@@ -374,8 +385,8 @@ public:
     void DrawInventory( zCWorld* world, zCCamera& camera );
 
     /** Draws a morphmesh */
-    void DrawMorphMesh( zCMorphMesh* msh, std::map<zCMaterial*, std::vector<MeshInfo*>>& meshes );
-    void DrawMorphMesh_Layered( zCMorphMesh* msh, std::map<zCMaterial*, std::vector<MeshInfo*>>& meshes );
+    void DrawMorphMesh( zCMorphMesh* msh, std::map<zCMaterial*, std::vector<std::unique_ptr<MeshInfo>>>& meshes );
+    void DrawMorphMesh_Layered( zCMorphMesh* msh, std::map<zCMaterial*, std::vector<std::unique_ptr<MeshInfo>>>& meshes );
 
     /** Locks the resource CriticalSection */
     void EnterResourceCriticalSection();
@@ -522,7 +533,7 @@ public:
     GInventory* GetInventory();
 
     /** Returns if the material is currently active */
-    bool IsMaterialActive( zCMaterial* mat );
+    bool IsMaterialActive( zCMaterial* mat ) const;
 
     /** Sets the current input state. Keeps an internal count of how many times it was disabled. */
     void SetEnableGothicInput( bool value );
@@ -681,10 +692,9 @@ public:
 
     /** Reset's the material info that were previously gathered */
     void ResetMaterialInfo();
-
     /** Returns the material info associated with the given material */
-    MaterialInfo* GetMaterialInfoFrom( zCTexture* tex );
-    MaterialInfo* GetMaterialInfoFrom( zCTexture* tex, const std::string_view textureName );
+    MaterialInfo* GetMaterialInfoFrom(void* any, std::string_view materialName);
+    MaterialInfo* GetMaterialInfoFrom(zCMaterial* mat);
 
     /** Returns a texture from the given surface */
     zCTexture* GetTextureBySurface( MyDirectDrawSurface7* surface );
@@ -905,7 +915,7 @@ private:
     std::unordered_map<zCVob*, std::string> tempParticleNames;
 
     /** List of Meshes derived from a zCParticleFX-Visual */
-    std::unordered_map<zCVob*, MeshVisualInfo*> ParticleEffectProgMeshes;
+    std::unordered_map<zCVob*, std::unique_ptr<MeshVisualInfo>> ParticleEffectProgMeshes;
 
     /** Poly strip Visuals */
     std::set<zCPolyStrip*> PolyStripVisuals;
@@ -950,7 +960,7 @@ private:
     std::unordered_map<zCBspBase*, BspInfo> BspLeafVobLists;
 
     /** Map for the material infos */
-    gtl::flat_hash_map<zCTexture*, std::unique_ptr<MaterialInfo>> MaterialInfos;
+    gtl::flat_hash_map<void*, std::unique_ptr<MaterialInfo>> MaterialInfos;
 
     /** Maps visuals to vobs */
     gtl::flat_hash_map<zCVisual*, std::vector<BaseVobInfo*>> VobsByVisual;

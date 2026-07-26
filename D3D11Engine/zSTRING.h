@@ -37,10 +37,14 @@ public:
     {
         return length;
     }
+    
+    std::string_view ToView() const {
+        return std::string_view(ToChar(), length);
+    }
 
 private:
     void* _vtblString;
-    void* _unknwn;
+    void* _allocator;
     //---
     char* _dataPtr;
     size_t length;

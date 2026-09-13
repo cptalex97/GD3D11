@@ -315,6 +315,7 @@ struct VobInfo : public BaseVobInfo {
     VobInfo() :
         LastRenderPosition{},
         IsIndoorVob{},
+        IsGoucBarrier{},
         VisibleInRenderPass{},
         VobSection{},
         WorldMatrix{},
@@ -340,6 +341,10 @@ struct VobInfo : public BaseVobInfo {
 
     /** True if this is an indoor-vob */
     bool IsIndoorVob;
+
+    /** GOUC: True if this is the magic barrier. It lives only in GothicAPI::GoucBarrierVobs
+        and is kept out of every regular vob list. */
+    bool IsGoucBarrier;
 
     /** Flag to see if this vob was drawn in the current render pass. Used to collect the same vob only once. */
     std::atomic<size_t> VisibleInRenderPass;

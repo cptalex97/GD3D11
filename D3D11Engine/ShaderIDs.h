@@ -32,6 +32,7 @@ enum class VShaderID : size_t {
     VS_ExSkeletalCube,
     VS_ExNodeInstanced,
     VS_DecalInstanced,
+    VS_GoucBarrier,
     COUNT
 };
 
@@ -106,6 +107,7 @@ enum class PShaderID : size_t {
     PS_FP_DiffuseNormalmappedAlphaTest,
     PS_FP_DiffuseNormalmappedAlphaTestFxMap,
     PS_FP_ShadowMask,
+    PS_GoucBarrier,
     COUNT
 };
 

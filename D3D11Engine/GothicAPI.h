@@ -21,6 +21,25 @@ class zCModelPrototype;
 struct ScreenSpaceLine;
 struct LineVertex;
 
+/** GOUC: tuning of the magic barrier, read from the vob name (see ParseGoucBarrierName).
+    Defaults are the values of Gothic 1's oCBarrier. */
+struct GoucBarrierParams {
+    float UVScale = 1.0f;       // G1: UV_SCALER 1.0
+    float Speed = 1.0f;         // time factor for wave, flicker and scroll
+    float Wave = 1.0f;          // factor on the texture coordinate wave amplitude
+    float Scroll = 0.15f;       // texture scroll in U per second (G1: 0.00015 per millisecond)
+    float GroundFade = 8000.0f; // G1: fade in over the lowest 80 m of the mesh, 0 = off
+    float TopFade = 0.925f;     // G1: fade out above 92.5 % of the mesh height, >= 1 = off
+    float Gain = 1.0f;          // multiplier on top of the vob transparency
+    float Flicker = 1.0f;       // G1: per-vertex alpha flicker, 0 = off
+    int Layers = 2;             // G1 draws two layers
+};
+
+struct GoucBarrierEntry {
+    zCVob* Vob;
+    GoucBarrierParams Params;
+};
+
 struct RndCullContext {
     RndCullContext():
     frustum({}),
@@ -369,6 +388,9 @@ public:
 
     void DrawTransparencyVobs();
     void DrawSkeletalVN();
+
+    /** GOUC: Draws the magic barrier like Gothic 1 did, independent of the vob draw distance */
+    void DrawGoucBarriers();
 
     /** Draws the inventory */
     void DrawInventory( zCWorld* world, zCCamera& camera );
@@ -935,6 +957,10 @@ private:
 
     /** List of dynamically added vobs */
     std::vector<VobInfo*> DynamicallyAddedVobs;
+
+    /** GOUC: Magic barrier vobs. Stored as zCVob* and resolved through VobMap each frame,
+        because OnVisualDeleted may delete a VobInfo without telling the other lists. */
+    std::vector<GoucBarrierEntry> GoucBarrierVobs;
 
     /** Map of vobs and VobIndfos */
     gtl::flat_hash_map<zCVob*, VobInfo*> VobMap;

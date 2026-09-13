@@ -4150,6 +4150,9 @@ XRESULT D3D11GraphicsEngine::OnStartWorldRendering() {
             Engine::GAPI->DrawTransparencyVobs();
             SetRenderingStage( oldStage );
             Engine::GAPI->DrawSkeletalVN();
+
+            // GOUC: magic barrier, additive and independent of the vob draw distance
+            Engine::GAPI->DrawGoucBarriers();
             
             // for Post-Processing FX we use the full viewport for now
             // TODO: introduce UV-scaling to PostFX

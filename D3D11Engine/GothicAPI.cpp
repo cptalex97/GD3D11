@@ -841,6 +841,7 @@ void GothicAPI::ResetVobs() {
     BspLeafVobLists.clear();
     LeafLinearCache.Clear();
     DynamicallyAddedVobs.clear();
+    GoucBarrierVobs.clear();
     DecalVobs.clear();
     VobsByVisual.clear();
     SkeletalVobMap.clear();
@@ -2007,6 +2008,66 @@ void GothicAPI::LeaveResourceCriticalSection() {
     LeaveCriticalSection( &ResourceCriticalSection );
 }
 
+/** GOUC: Returns true if the vob name marks a magic barrier and reads the optional tuning
+    tokens that follow it, e.g. "MINENTAL_BARRIERE UV=2 GROUND=0 GAIN=1.5".
+    Keys: UV, SPEED, WAVE, SCROLL, GROUND, TOP, GAIN, FLICKER, LAYERS. Gothic stores object
+    names in upper case. The name is only read when the vob enters the world. */
+static bool ParseGoucBarrierName( const std::string& rawName, GoucBarrierParams& params ) {
+    std::string name = rawName;
+    std::transform( name.begin(), name.end(), name.begin(),
+        []( unsigned char c ) { return static_cast<char>(std::toupper( c )); } );
+
+    static const char* const prefixes[] = { "MINENTAL_BARRIERE", "GOUC_BARRIER" };
+    bool isBarrier = false;
+    for ( const char* prefix : prefixes ) {
+        if ( name.rfind( prefix, 0 ) == 0 ) {
+            isBarrier = true;
+            break;
+        }
+    }
+    if ( !isBarrier ) {
+        return false;
+    }
+
+    params = GoucBarrierParams();
+
+    size_t pos = 0;
+    while ( pos < name.size() ) {
+        size_t end = name.find_first_of( " ;", pos );
+        if ( end == std::string::npos ) {
+            end = name.size();
+        }
+        const std::string token = name.substr( pos, end - pos );
+        pos = end + 1;
+
+        const size_t eq = token.find( '=' );
+        if ( eq == std::string::npos ) {
+            continue;
+        }
+
+        // from_chars is locale independent, unlike atof
+        float value = 0.0f;
+        const char* first = token.data() + eq + 1;
+        const char* last = token.data() + token.size();
+        if ( std::from_chars( first, last, value ).ec != std::errc() ) {
+            continue;
+        }
+
+        const std::string key = token.substr( 0, eq );
+        if ( key == "UV" ) params.UVScale = value;
+        else if ( key == "SPEED" ) params.Speed = value;
+        else if ( key == "WAVE" ) params.Wave = value;
+        else if ( key == "SCROLL" ) params.Scroll = value;
+        else if ( key == "GROUND" ) params.GroundFade = value;
+        else if ( key == "TOP" ) params.TopFade = value;
+        else if ( key == "GAIN" ) params.Gain = value;
+        else if ( key == "FLICKER" ) params.Flicker = value;
+        else if ( key == "LAYERS" ) params.Layers = std::clamp( static_cast<int>(value), 1, 2 );
+    }
+
+    return true;
+}
+
 /** Called when a VOB got removed from the world */
 void GothicAPI::OnRemovedVob( zCVob* vob, zCWorld* world ) {
     //LogInfo() << "Removing vob: " << vob;
@@ -2019,6 +2080,15 @@ void GothicAPI::OnRemovedVob( zCVob* vob, zCWorld* world ) {
     }
 
     RegisteredVobs.erase( it );
+
+    // GOUC: forget the magic barrier before its VobInfo gets deleted below
+    for ( size_t i = 0; i < GoucBarrierVobs.size(); ++i ) {
+        if ( GoucBarrierVobs[i].Vob == vob ) {
+            GoucBarrierVobs[i] = GoucBarrierVobs.back();
+            GoucBarrierVobs.pop_back();
+            break;
+        }
+    }
 
     zCVisual* visual = vob->GetVisual();
     if ( visual ) {
@@ -2282,6 +2352,16 @@ void GothicAPI::OnAddVob( zCVob* vob, zCWorld* world ) {
             // Check for mainworld
             if ( world == oCGame::GetGame()->_zCSession_world ) {
                 VobMap[vob] = vi;
+
+                // GOUC: the magic barrier bypasses sections, the BSP cache and the dynamic
+                // list, so neither draw distance nor instancing nor shadows touch it.
+                GoucBarrierParams barrierParams;
+                if ( ParseGoucBarrierName( vob->GetName(), barrierParams ) ) {
+                    vi->IsGoucBarrier = true;
+                    vi->UpdateState();
+                    GoucBarrierVobs.push_back( GoucBarrierEntry{ vob, barrierParams } );
+                    break;
+                }
 
                 vi->VobSection = &WorldSections[section.x][section.y];
                 vi->VobSection->Vobs.push_back( vi );
@@ -3116,6 +3196,94 @@ void GothicAPI::DrawSkeletalVN() {
 
         VNSkeletalVobs.pop_back();
     }
+}
+
+/** GOUC: Draws the magic barrier the way Gothic 1's oCBarrier::Render did: two additive
+    layers with animated texture coordinates, without writing depth and without any draw
+    distance. The animation itself lives in VS_GoucBarrier.hlsl. */
+void GothicAPI::DrawGoucBarriers() {
+    if ( GoucBarrierVobs.empty() || !RendererState.RendererSettings.DrawVOBs ) {
+        return;
+    }
+
+    D3D11GraphicsEngine* g = reinterpret_cast<D3D11GraphicsEngine*>(Engine::GraphicsEngine);
+
+    RendererState.RasterizerState.SetDefault();
+    RendererState.RasterizerState.SetDirty();
+    RendererState.BlendState.SetAdditiveBlending();
+    RendererState.BlendState.SetDirty();
+    RendererState.DepthState.SetDefault();
+    RendererState.DepthState.DepthWriteEnabled = false;
+    RendererState.DepthState.SetDirty();
+
+    g->SetActiveVertexShader( VShaderID::VS_GoucBarrier );
+    g->SetActivePixelShader( PShaderID::PS_GoucBarrier );
+    g->SetupVS_ExMeshDrawCall();
+    g->SetupVS_ExConstantBuffer();
+
+    auto vsBarrierInfo = g->GetActiveVS()->GetBuffer( "GoucBarrierInfo" );
+    auto psBarrierInfo = g->GetShaderManager().GetPShader( PShaderID::PS_GoucBarrier )->GetBuffer( "GoucBarrierPS" );
+
+    const double totalSeconds = GetTimeSeconds();
+    VS_ExConstantBuffer_PerInstance cbPerInstance;
+
+    for ( auto const& entry : GoucBarrierVobs ) {
+        auto vit = VobMap.find( entry.Vob );
+        if ( vit == VobMap.end() ) {
+            continue;
+        }
+
+        VobInfo* vi = vit->second;
+        if ( !vi || !vi->VisualInfo || !entry.Vob->GetShowVisual() ) {
+            continue;
+        }
+
+        vi->UpdateVobConstantBuffer( cbPerInstance );
+        g->GetActiveVS()->GetBuffer( 1 ).Update( &cbPerInstance, sizeof( cbPerInstance ) ).Bind();
+
+        GoucBarrierPSConstantBuffer psCb = {};
+        psCb.GBP_Intensity = entry.Vob->GetVobTransparency() * entry.Params.Gain;
+        psBarrierInfo.Update( &psCb, sizeof( psCb ) ).Bind();
+
+        const double t = totalSeconds * entry.Params.Speed;
+        // Like G1 the scroll offset is wrapped on the CPU, so it never loses precision
+        const double scroll = t * entry.Params.Scroll;
+
+        for ( int layer = 0; layer < entry.Params.Layers; ++layer ) {
+            GoucBarrierVSConstantBuffer vsCb = {};
+            vsCb.GB_Time = static_cast<float>(t);
+            vsCb.GB_LayerScale = layer > 0 ? 1.5f : 1.0f;
+            vsCb.GB_UVScale = entry.Params.UVScale;
+            vsCb.GB_Wave = entry.Params.Wave;
+            vsCb.GB_ScrollOffset = static_cast<float>(scroll - std::floor( scroll ));
+            vsCb.GB_GroundFade = entry.Params.GroundFade;
+            vsCb.GB_TopY = vi->VisualInfo->BBox.Max.y;
+            // Without a positive top there is nothing to fade out towards
+            vsCb.GB_TopFade = vsCb.GB_TopY > 0.0f ? entry.Params.TopFade : 2.0f;
+            vsCb.GB_Flicker = entry.Params.Flicker;
+            vsBarrierInfo.Update( &vsCb, sizeof( vsCb ) ).Bind();
+
+            for ( auto const& materialMesh : vi->VisualInfo->Meshes ) {
+                if ( materialMesh.first && materialMesh.first->GetTexture() ) {
+                    if ( materialMesh.first->GetTexture()->CacheIn( 0.6f ) == zRES_CACHED_IN ) {
+                        materialMesh.first->GetTexture()->Bind( 0 );
+                    }
+                }
+
+                for ( auto const& meshInfo : materialMesh.second ) {
+                    g->DrawVertexBufferIndexed(
+                        meshInfo->MeshVertexBuffer,
+                        meshInfo->MeshIndexBuffer,
+                        meshInfo->Indices.size() );
+                }
+            }
+        }
+    }
+
+    RendererState.BlendState.SetDefault();
+    RendererState.BlendState.SetDirty();
+    RendererState.DepthState.SetDefault();
+    RendererState.DepthState.SetDirty();
 }
 
 /** Called when a particle system got removed */
@@ -4602,7 +4770,7 @@ void GothicAPI::BuildBspVobMapCacheHelper( zCBspBase* base ) {
             auto vit = VobMap.find( vob );
             if ( vit != VobMap.end() ) {
                 VobInfo* v = vit->second;
-                if ( v ) {
+                if ( v && !v->IsGoucBarrier ) {
                     float vobSmallSize = Engine::GAPI->GetRendererState().RendererSettings.SmallVobSize;
 
                     // Treat indoor vobs as indoor vobs only in outdoor locations

@@ -296,6 +296,32 @@ struct GhostAlphaConstantBuffer {
     float GA_Pad;
 };
 
+/** GOUC: magic barrier, must match GoucBarrierInfo in VS_GoucBarrier.hlsl */
+struct GoucBarrierVSConstantBuffer {
+    float GB_Time;
+    float GB_LayerScale;
+    float GB_UVScale;
+    float GB_Wave;
+
+    float GB_ScrollOffset;
+    float GB_GroundFade;
+    float GB_TopY;
+    float GB_TopFade;
+
+    float GB_Flicker;
+    float GB_Pad0;
+    float GB_Pad1;
+    float GB_Pad2;
+};
+
+/** GOUC: magic barrier, must match GoucBarrierPS in PS_GoucBarrier.hlsl */
+struct GoucBarrierPSConstantBuffer {
+    float GBP_Intensity;
+    float GBP_Pad0;
+    float GBP_Pad1;
+    float GBP_Pad2;
+};
+
 struct GrassConstantBuffer {
     float3 G_NormalVS;
     float G_Time;

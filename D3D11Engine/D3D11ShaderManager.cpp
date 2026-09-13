@@ -222,6 +222,11 @@ XRESULT D3D11ShaderManager::Init() {
     Shaders.push_back( ShaderInfo::make<PShaderID::PS_Transparency>( "PS_Transparency.hlsl" )  );
     Shaders.push_back( ShaderInfo::make<PShaderID::PS_TransparencySkel>( "PS_TransparencySkel.hlsl" )  );
 
+    // GOUC: magic barrier, see GothicAPI::DrawGoucBarriers
+    Shaders.push_back( ShaderInfo::make<VShaderID::VS_GoucBarrier>( "VS_GoucBarrier.hlsl" )
+        .with_layout( VERTEX_INPUT_LAYOUT_1 ) );
+    Shaders.push_back( ShaderInfo::make<PShaderID::PS_GoucBarrier>( "PS_GoucBarrier.hlsl" ) );
+
     Shaders.push_back( ShaderInfo::make<PShaderID::PS_World>( "PS_World.hlsl" ).with_macros({ {"MOTION_VECTORS", "1"}})  );
     Shaders.push_back( ShaderInfo::make<PShaderID::PS_World_NoMV>( "PS_World.hlsl" )  );
 

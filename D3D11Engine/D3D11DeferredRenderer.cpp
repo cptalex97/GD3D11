@@ -151,7 +151,13 @@ bool D3D11DeferredRenderer::BindShaderForTexture( D3D11ShaderManager& shaderMana
     } else if ( texture->HasAlphaChannel() || forceAlphaTest ) {
         if ( texture->GetSurface()->GetFxMap() ) {
             newShader = shaderManager.GetPShader( resolvedDiffuseNormalmappedAlphatestFxMap );
-        } else if ( texture->GetSurface()->GetNormalmap() || Engine::GAPI->GetSceneWetness() > 1e-6 ) {
+        // GOUC 18.09.2026: hier stand "|| Engine::GAPI->GetSceneWetness() > 1e-6". Sobald die Szene
+        // nass war, ging damit JEDE Oberflaeche durch den Normalmap-Shader, auch die ohne Normalmap.
+        // perturb_normal tastet dort Slot 1 ab, in dem fuer solche Flaechen nichts Passendes gebunden
+        // ist -- im Spiel gemeldet als zerknitterte "Papierhaut" an Charakteren und als tiefrotes
+        // Flackern ueber die ganze Karte, beides genau ab dem Moment, in dem es zu regnen anfing.
+        // Der Nass-Glanz auf Flaechen OHNE Normalmap faellt damit weg; ein kaputtes Bild ist teurer.
+        } else if ( texture->GetSurface()->GetNormalmap() ) {
             newShader = shaderManager.GetPShader( resolvedDiffuseNormalmappedAlphatest ); 
         } else {
             newShader = shaderManager.GetPShader( PShaderID::PS_DiffuseAlphaTest );
@@ -159,7 +165,7 @@ bool D3D11DeferredRenderer::BindShaderForTexture( D3D11ShaderManager& shaderMana
     } else {
         if ( texture->GetSurface()->GetFxMap() ) {
             newShader = shaderManager.GetPShader( resolvedDiffuseNormalmappedFxMap );
-        } else if ( texture->GetSurface()->GetNormalmap() || Engine::GAPI->GetSceneWetness() > 1e-6 ) {
+        } else if ( texture->GetSurface()->GetNormalmap() ) {
             newShader = shaderManager.GetPShader( resolvedDiffuseNormalmapped );
         } else {
             newShader = shaderManager.GetPShader( PShaderID::PS_Diffuse );

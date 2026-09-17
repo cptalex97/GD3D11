@@ -292,6 +292,7 @@ inline constexpr float GOUC_LIGHTNING_MAX_MS = 1500.0f;
 /** How much of the flash the sky gets on top of the scene light. The sky is what one looks at. */
 inline constexpr float GOUC_LIGHTNING_SKY_FACTOR = 1.6f;
 
+
 struct GoucLightningState {
     DWORD StartMs = 0;
     float Strength = 0.0f;   // 0 = nothing is flashing
@@ -333,6 +334,20 @@ inline float GoucLightningBoost() {
         shape = 0.85f * (1.0f - d) * (1.0f - d);
     }
     return s.Strength * shape;
+}
+
+/** Hard ceiling for the sky brightness during a bolt. SKYSUN itself is clamped to 1.10, but
+ *  the boost is ADDED on top and then multiplies AC_KrESun and AC_KmESun -- the Rayleigh and
+ *  Mie sun constants of the atmosphere model. At full strength that was 1.10 + 3.0 * 1.6 =
+ *  5.9, so nearly six times the scattering: the model saturates and the sky flips to deep
+ *  red, flickering with the bolt (reported in game 18.09.2026, "tiefrotes Flackern ueber die
+ *  ganze Karte" when the weather turned). A bolt has to brighten the sky, not repaint it. */
+inline constexpr float GOUC_LIGHTNING_SKY_MAX = 1.90f;
+
+/** Sky brightness including a running bolt, capped. */
+inline float GoucLightningSkySun( float baseSkySun ) {
+    const float lit = baseSkySun + GoucLightningBoost() * GOUC_LIGHTNING_SKY_FACTOR;
+    return ( lit > GOUC_LIGHTNING_SKY_MAX ) ? GOUC_LIGHTNING_SKY_MAX : lit;
 }
 
 /** Reads a trigger vob name. Returns false for anything that is not a lightning vob. */

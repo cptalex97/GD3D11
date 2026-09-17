@@ -302,7 +302,9 @@ XRESULT GSky::RenderSky() {
         wl.z = Toolbox::lerp( wl.z, mean, gw.SkyDesat ) - 0.015f * gw.SkyCool;
         AtmosphereCB.AC_Wavelength = wl;
         // A bolt lights the sky more than the ground -- that is what one actually looks at.
-        const float skySun = gw.SkySun + GoucLightningBoost() * GOUC_LIGHTNING_SKY_FACTOR;
+        // Capped: these two constants drive the atmospheric scattering, and an uncapped boost
+        // saturates the model into deep red (GoucWeather.h).
+        const float skySun = GoucLightningSkySun( gw.SkySun );
         AtmosphereCB.AC_KrESun *= skySun;
         AtmosphereCB.AC_KmESun *= skySun;
     }

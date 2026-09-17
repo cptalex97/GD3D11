@@ -138,6 +138,38 @@ inline float GoucWeatherRainParticleFactor() {
     return snapped;
 }
 
+/** The engine's own outdoor fog density (GothicGraphicsState, new world). FOG is a factor on
+ *  a value the PLAYER owns -- F11 and [Fog] GlobalDensity in UserSettings.ini -- and five
+ *  times almost nothing is still almost nothing. A weather fog therefore gets a floor
+ *  derived from this reference instead of from whatever the player left in the INI. */
+inline constexpr float GOUC_WEATHER_FOG_REFERENCE_DENSITY = 0.00004f;
+
+/** How far the distance ramp may be pulled in. The height fog is weighted by distance
+ *  (HF_WeightZNear/ZFar, driven by the player's fog range), so a fog only ever thickened
+ *  hundreds of metres out -- exactly where nobody is looking. Pulling the ramp in brings the
+ *  soup close, and the cap keeps it from turning into a white wall in front of the nose.
+ *  Costs nothing: same pass, same shader, only different constants. */
+inline constexpr float GOUC_WEATHER_FOG_MAX_NEAR_PULL = 2.5f;
+
+/** Fog density for a weather look, given the player's own setting. */
+inline float GoucWeatherFogDensity( float playerDensity ) {
+    const float fog = GoucWeatherCur().Fog;
+    const float scaled = playerDensity * fog;
+    if ( fog <= 1.0f ) {
+        return scaled;
+    }
+    return std::max( scaled, GOUC_WEATHER_FOG_REFERENCE_DENSITY * fog );
+}
+
+/** Divisor for the distance ramp, 1.0 while no fog weather is running. */
+inline float GoucWeatherFogNearPull() {
+    const float fog = GoucWeatherCur().Fog;
+    if ( fog <= 1.0f ) {
+        return 1.0f;
+    }
+    return std::min( fog, GOUC_WEATHER_FOG_MAX_NEAR_PULL );
+}
+
 /** Reads a control vob name. Gothic stores object names in upper case; unknown keys are ignored. */
 inline bool GoucWeatherParseName( const std::string& rawName, GoucWeatherParams& params, float& fadeSeconds ) {
     std::string name = rawName;

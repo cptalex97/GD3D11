@@ -297,7 +297,9 @@ XRESULT D3D11PfxRenderer::RenderPostFXComposition(
         }
         XMStoreFloat4x4( &cb.InvView, XMMatrixInverse( nullptr, Engine::GAPI->GetViewMatrixXM() ) );
         cb.CameraPosition = Engine::GAPI->GetCameraPosition();
-        cb.HF_GlobalDensity = settings.FogGlobalDensity * GoucWeatherCur().Fog; // GOUC: weather/season
+        // GOUC: weather/season. Not a plain multiplication -- the base density belongs to the
+        // player, so a weather fog enforces a floor of its own (GoucWeather.h).
+        cb.HF_GlobalDensity = GoucWeatherFogDensity( settings.FogGlobalDensity );
         cb.HF_HeightFalloff = settings.FogHeightFalloff;
 
         float height = settings.FogHeight + GoucWeatherCur().FogH; // GOUC: weather/season
@@ -315,6 +317,16 @@ XRESULT D3D11PfxRenderer::RenderPostFXComposition(
         float atmoMin = 27799.9922f;
         cb.HF_WeightZFar = std::min( cb.HF_WeightZFar, atmoMax );
         cb.HF_WeightZNear = std::min( cb.HF_WeightZNear, atmoMin );
+
+        // GOUC: a weather fog pulls the distance ramp in, otherwise it only thickens hundreds
+        // of metres out and the near field stays clear -- which is where one actually looks.
+        {
+            const float goucPull = GoucWeatherFogNearPull();
+            if ( goucPull > 1.0f ) {
+                cb.HF_WeightZFar /= goucPull;
+                cb.HF_WeightZNear /= goucPull;
+            }
+        }
 
 #if !defined(BUILD_GOTHIC_1_08k) && !defined(BUILD_1_12F)
         float fogDensityFactor = 2;

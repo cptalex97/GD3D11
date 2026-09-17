@@ -4454,6 +4454,36 @@ XRESULT D3D11GraphicsEngine::OnStartWorldRendering() {
         } );
     }
     
+    // GOUC: weather/season colour grading of the 3D scene (GoucWeather.h, PS_GoucGrade.hlsl).
+    // Runs before the HUD is drawn, so menus and text keep their colours. Skipped when neutral.
+    if ( GoucWeatherGradeActive() ) {
+        graph.AddPass( RG_PASS_NAME("GOUC Weather Grade"), [&]( RGBuilder& builder, RenderPass& pass ) {
+            builder.Read( backBufferHandle );
+            builder.Write( backBufferHandle );
+
+            pass.m_executeCallback = [this, backBufferHandle](const RenderGraph& graph) {
+                TracyD3D11ZoneCGX( "D3D11GraphicsEngine::GOUC Weather Grade" );
+                auto backbufferTex = graph.GetPhysicalTexture( backBufferHandle );
+                auto tempBuffer = PfxRenderer->GetTempBuffer();
+                PfxRenderer->CopyTextureToRTV( backbufferTex->GetShaderResView(), tempBuffer->GetRenderTargetView(), GetResolution() );
+
+                auto gradePS = GetShaderManager().GetPShader( PShaderID::PS_GoucGrade );
+                gradePS->Apply();
+
+                const auto& gw = GoucWeatherCur();
+                GoucGradeConstantBuffer gcb = {};
+                gcb.GG_Temp = gw.Temp;
+                gcb.GG_Sat = gw.Sat;
+                gcb.GG_Contrast = gw.Contrast;
+                gradePS->GetBuffer( "GoucGrade" ).Update( &gcb ).Bind();
+
+                GetContext()->PSSetSamplers( 0, 1, LinearSamplerState.GetAddressOf() );
+                PfxRenderer->CopyTextureToRTV( tempBuffer->GetShaderResView(), backbufferTex->GetRenderTargetView(), GetResolution(), true );
+                GetContext()->PSSetSamplers( 0, 1, DefaultSamplerState.GetAddressOf() );
+            };
+        } );
+    }
+
     graph.AddPass( RG_PASS_NAME("Reset Viewport"), [&]( RGBuilder& builder, RenderPass& pass ) {
         builder.Write( backBufferHandle );
 
@@ -6933,7 +6963,8 @@ void D3D11GraphicsEngine::ApplyWindProps( VS_ExConstantBuffer_Wind& windBuff ) {
     constexpr float rainMaxSpeedMultiplier = 2.15f;
 
     vobAnimation_WindStrength = (1.0f + rainWeight * (rainMaxStrengthMultiplier - 1.0f))
-        * Engine::GAPI->GetRendererState().RendererSettings.GlobalWindStrength;
+        * Engine::GAPI->GetRendererState().RendererSettings.GlobalWindStrength
+        * GoucWeatherCur().Wind; // GOUC: stormy weather without rain
 
     WindGlobalTime += dt * (1.5f * (1.0f + rainWeight * (rainMaxSpeedMultiplier - 1.0f)));
     windBuff.globalTime = WindGlobalTime;

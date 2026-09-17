@@ -290,6 +290,20 @@ XRESULT GSky::RenderSky() {
     AtmosphereCB.AC_RayleighOverScaleDepth = AtmosphereCB.AC_Scale / AtmosphereCB.AC_RayleighScaleDepth;
     AtmosphereCB.AC_g = Atmosphere.G;
     AtmosphereCB.AC_Wavelength = Atmosphere.WaveLengths;
+    {
+        // GOUC: weather/season tint of the sky (GoucWeather.h). Only the constant buffer is
+        // changed, Atmosphere keeps the world's own wavelengths. A smaller wavelength scatters
+        // more, so a cooler sky lowers blue and raises red; greyer means closer together.
+        const auto& gw = GoucWeatherCur();
+        float3 wl = Atmosphere.WaveLengths;
+        const float mean = (wl.x + wl.y + wl.z) / 3.0f;
+        wl.x = Toolbox::lerp( wl.x, mean, gw.SkyDesat ) + 0.010f * gw.SkyCool;
+        wl.y = Toolbox::lerp( wl.y, mean, gw.SkyDesat );
+        wl.z = Toolbox::lerp( wl.z, mean, gw.SkyDesat ) - 0.015f * gw.SkyCool;
+        AtmosphereCB.AC_Wavelength = wl;
+        AtmosphereCB.AC_KrESun *= gw.SkySun;
+        AtmosphereCB.AC_KmESun *= gw.SkySun;
+    }
     AtmosphereCB.AC_SpherePosition = sp;
     if ( !Engine::GAPI->GetRendererState().RendererSettings.EnableRainEffects ) {
         AtmosphereCB.AC_SceneWettness = 0.f;

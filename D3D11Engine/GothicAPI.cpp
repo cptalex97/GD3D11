@@ -569,6 +569,9 @@ void GothicAPI::OnWorldUpdate() {
         }
     }
 
+    // GOUC: advance the weather/season overlay (GoucWeather.h)
+    GoucWeatherUpdate();
+
     // Do rain-effects
     zCSkyController_Outdoor* skyController;
 
@@ -577,7 +580,9 @@ void GothicAPI::OnWorldUpdate() {
         if ( RendererState.RendererSettings.AtmosphericScattering && outdoor ) {
             float lastMasterTime = skyController->GetLastMasterTime();
             float masterTime = skyController->GetMasterTime();
-            if ( (lastMasterTime - masterTime) > 0.95f && masterTime < 0.02f ) {
+            // GOUC: while the server controls the weather, every client rolling its own rain
+            // times would put each player into different weather
+            if ( (lastMasterTime - masterTime) > 0.95f && masterTime < 0.02f && !GoucWeatherControlsRain() ) {
 #ifndef BUILD_GOTHIC_1_08k
                 float timeStartRain = std::min<float>( float( rand() ) / float( RAND_MAX ), 0.958f );
                 float timeStopRain = std::min<float>( timeStartRain + 0.042f + ( float( rand() ) / float( RAND_MAX ) * 0.06f ), 1.0f );
@@ -842,6 +847,7 @@ void GothicAPI::ResetVobs() {
     LeafLinearCache.Clear();
     DynamicallyAddedVobs.clear();
     GoucBarrierVobs.clear();
+    GoucWeatherOnWorldReset();
     DecalVobs.clear();
     VobsByVisual.clear();
     SkeletalVobMap.clear();
@@ -2071,6 +2077,7 @@ static bool ParseGoucBarrierName( const std::string& rawName, GoucBarrierParams&
 /** Called when a VOB got removed from the world */
 void GothicAPI::OnRemovedVob( zCVob* vob, zCWorld* world ) {
     //LogInfo() << "Removing vob: " << vob;
+    GoucWeatherOnVobRemoved( vob );
     Engine::GraphicsEngine->OnVobRemovedFromWorld( vob );
 
     auto it = RegisteredVobs.find( vob );
@@ -2352,6 +2359,20 @@ void GothicAPI::OnAddVob( zCVob* vob, zCWorld* world ) {
             // Check for mainworld
             if ( world == oCGame::GetGame()->_zCSession_world ) {
                 VobMap[vob] = vi;
+
+                // GOUC: weather control vob. It only carries the target look in its name and is
+                // never drawn: it stays out of sections and the dynamic list, and it is not a
+                // barrier entry either (IsGoucBarrier just keeps the BSP lists from picking it up).
+                {
+                    GoucWeatherParams weatherParams;
+                    float weatherFade = 0.0f;
+                    if ( GoucWeatherParseName( vob->GetName(), weatherParams, weatherFade ) ) {
+                        vi->IsGoucBarrier = true;
+                        vi->UpdateState();
+                        GoucWeatherOnControlVobAdded( vob, weatherParams, weatherFade );
+                        break;
+                    }
+                }
 
                 // GOUC: the magic barrier bypasses sections, the BSP cache and the dynamic
                 // list, so neither draw distance nor instancing nor shadows touch it.
@@ -6228,6 +6249,9 @@ float GothicAPI::GetRainFXWeight() {
     // This doesn't seem to go as high as 1 or just very slowly. Scale it so it does go up quicker.
     gRainFxWeight = std::min( gRainFxWeight / 0.85f, 1.0f );
 
+    // GOUC: drizzle is weaker rain (GoucWeather.h)
+    gRainFxWeight *= GoucWeatherCur().Rain;
+
     // Return the higher of the two, so we get the chance to overwrite it
     return std::max( myRainFxWeight, gRainFxWeight );
 }
@@ -6259,7 +6283,8 @@ float GothicAPI::GetSceneWetness() {
             SceneWetness = 0.0f;
     }
 
-    return SceneWetness;
+    // GOUC: dew in the morning, ground that stays wet after rain (GoucWeather.h)
+    return std::max( SceneWetness, GoucWeatherCur().Wet );
 }
 
 /** Adds a future to the internal buffer */

@@ -38,11 +38,12 @@ XRESULT D3D11PFX_HeightFog::Render( RenderToTextureBuffer* fxbuffer ) {
 
 	cb.CameraPosition = Engine::GAPI->GetCameraPosition();
 
-	cb.HF_GlobalDensity = Engine::GAPI->GetRendererState().RendererSettings.FogGlobalDensity;
+	cb.HF_GlobalDensity = Engine::GAPI->GetRendererState().RendererSettings.FogGlobalDensity * GoucWeatherCur().Fog; // GOUC: weather/season
 	cb.HF_HeightFalloff = Engine::GAPI->GetRendererState().RendererSettings.FogHeightFalloff;
 
-	float height = Engine::GAPI->GetRendererState().RendererSettings.FogHeight;
-	XMVECTOR color = XMLoadFloat3( Engine::GAPI->GetRendererState().RendererSettings.FogColorMod.toXMFLOAT3() );
+	float height = Engine::GAPI->GetRendererState().RendererSettings.FogHeight + GoucWeatherCur().FogH; // GOUC: weather/season
+	XMVECTOR color = XMVectorMultiply( XMLoadFloat3( Engine::GAPI->GetRendererState().RendererSettings.FogColorMod.toXMFLOAT3() ),
+		XMVectorSet( GoucWeatherCur().FogR, GoucWeatherCur().FogG, GoucWeatherCur().FogB, 1.0f ) ); // GOUC: weather/season
 
 	float fnear = 15000.0f;
 	float ffar = 60000.0f;

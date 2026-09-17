@@ -108,6 +108,7 @@ enum class PShaderID : size_t {
     PS_FP_DiffuseNormalmappedAlphaTestFxMap,
     PS_FP_ShadowMask,
     PS_GoucBarrier,
+    PS_GoucGrade,
     COUNT
 };
 

@@ -226,6 +226,8 @@ XRESULT D3D11ShaderManager::Init() {
     Shaders.push_back( ShaderInfo::make<VShaderID::VS_GoucBarrier>( "VS_GoucBarrier.hlsl" )
         .with_layout( VERTEX_INPUT_LAYOUT_1 ) );
     Shaders.push_back( ShaderInfo::make<PShaderID::PS_GoucBarrier>( "PS_GoucBarrier.hlsl" ) );
+    // GOUC: weather/season colour grading, see GoucWeather.h
+    Shaders.push_back( ShaderInfo::make<PShaderID::PS_GoucGrade>( "PS_GoucGrade.hlsl" ) );
 
     Shaders.push_back( ShaderInfo::make<PShaderID::PS_World>( "PS_World.hlsl" ).with_macros({ {"MOTION_VECTORS", "1"}})  );
     Shaders.push_back( ShaderInfo::make<PShaderID::PS_World_NoMV>( "PS_World.hlsl" )  );

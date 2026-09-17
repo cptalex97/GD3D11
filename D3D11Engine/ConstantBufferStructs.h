@@ -322,6 +322,14 @@ struct GoucBarrierPSConstantBuffer {
     float GBP_Pad2;
 };
 
+/** GOUC: weather/season colour grading, must match GoucGrade in PS_GoucGrade.hlsl */
+struct GoucGradeConstantBuffer {
+    float GG_Temp;
+    float GG_Sat;
+    float GG_Contrast;
+    float GG_Pad;
+};
+
 struct GrassConstantBuffer {
     float3 G_NormalVS;
     float G_Time;

@@ -152,6 +152,8 @@ XRESULT D3D11Effect::DrawRain() {
     lastNumParticles = numParticles;
 
     auto velocity = state.RendererSettings.RainGlobalVelocity;
+    velocity.x += GoucWeatherCur().RainX; // GOUC: slanted rain in a storm
+    velocity.z += GoucWeatherCur().RainZ;
     if ( isSnow ) {
         // make snow a lot slower
         velocity = XMFLOAT3( velocity.x * snowSpeedFactor, velocity.y * snowSpeedFactor, velocity.z * snowSpeedFactor );
@@ -336,6 +338,8 @@ XRESULT D3D11Effect::DrawRain_CS() {
     lastNumParticles = numParticles;
 
     auto velocity = state.RendererSettings.RainGlobalVelocity;
+    velocity.x += GoucWeatherCur().RainX; // GOUC: slanted rain in a storm
+    velocity.z += GoucWeatherCur().RainZ;
     if ( isSnow ) {
         // make snow a lot slower
         velocity = XMFLOAT3(velocity.x * snowSpeedFactor, velocity.y * snowSpeedFactor, velocity.z * snowSpeedFactor );
@@ -523,6 +527,7 @@ XRESULT D3D11Effect::DrawRainShadowmap() {
     // Get the section we are currently in
     XMVECTOR p = Engine::GAPI->GetCameraPositionXM();
     XMVECTOR rainVelocity = XMLoadFloat3( &Engine::GAPI->GetRendererState().RendererSettings.RainGlobalVelocity );
+    rainVelocity = XMVectorAdd( rainVelocity, XMVectorSet( GoucWeatherCur().RainX, 0.0f, GoucWeatherCur().RainZ, 0.0f ) ); // GOUC
     if ( XMVectorGetX( XMVector3LengthSq( rainVelocity ) ) < 0.0001f ) {
         rainVelocity = XMVectorSet( 0, -1, 0, 0 );
     }

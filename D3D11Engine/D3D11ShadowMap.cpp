@@ -1377,7 +1377,9 @@ DS_ScreenQuadConstantBuffer D3D11ShadowMap::FillSunCSMConstantBuffer() const {
         settings.SunLightStrength,
         settings.RainSunLightStrength,
         std::min( 1.0f, rain * 2.0f ) );
-    scb.SQ_LightColor = float4( sunColor.x, sunColor.y, sunColor.z, sunStrength );
+    // GOUC: weather/season sun tint and strength (GoucWeather.h)
+    scb.SQ_LightColor = float4( sunColor.x * GoucWeatherCur().SunR, sunColor.y * GoucWeatherCur().SunG,
+        sunColor.z * GoucWeatherCur().SunB, sunStrength * GoucWeatherCur().Sun );
 
     for ( size_t cascadeIdx = 0; cascadeIdx < MAX_CSM_CASCADES; ++cascadeIdx ) {
         XMStoreFloat4x4( &scb.SQ_ShadowViewProj[cascadeIdx],
@@ -1417,7 +1419,7 @@ DS_ScreenQuadConstantBuffer D3D11ShadowMap::FillSunCSMConstantBuffer() const {
         XMLoadFloat4x4( &reinterpret_cast<D3D11GraphicsEngine*>( Engine::GraphicsEngine )->Effects->GetRainShadowmapCameraRepl().ProjectionReplacement ) *
         XMLoadFloat4x4( &reinterpret_cast<D3D11GraphicsEngine*>( Engine::GraphicsEngine )->Effects->GetRainShadowmapCameraRepl().ViewReplacement ) );
 
-    scb.SQ_ShadowStrength = settings.ShadowStrength;
+    scb.SQ_ShadowStrength = settings.ShadowStrength * GoucWeatherCur().Shadow; // GOUC: softer when overcast
     scb.SQ_ShadowAOStrength = settings.ShadowAOStrength;
     scb.SQ_WorldAOStrength = settings.WorldAOStrength;
     scb.SQ_ShadowSoftness = settings.ShadowSoftness;
@@ -1514,7 +1516,9 @@ XRESULT D3D11ShadowMap::DrawWorldLights()
         std::min( 1.0f, rain * 2.0f ) );// Scale the darkening-factor faster here, so it
     // matches more with the increasing fog-density
 
-    scb.SQ_LightColor = float4( sunColor.x, sunColor.y, sunColor.z, sunStrength );
+    // GOUC: weather/season sun tint and strength (GoucWeather.h)
+    scb.SQ_LightColor = float4( sunColor.x * GoucWeatherCur().SunR, sunColor.y * GoucWeatherCur().SunG,
+        sunColor.z * GoucWeatherCur().SunB, sunStrength * GoucWeatherCur().Sun );
 
     // CSM: Alle Cascade-Matrizen setzen
 
@@ -1561,7 +1565,7 @@ XRESULT D3D11ShadowMap::DrawWorldLights()
         XMLoadFloat4x4( &graphicsEngine->Effects->GetRainShadowmapCameraRepl().ViewReplacement )
     );
 
-    scb.SQ_ShadowStrength = settings.ShadowStrength;
+    scb.SQ_ShadowStrength = settings.ShadowStrength * GoucWeatherCur().Shadow; // GOUC: softer when overcast
     scb.SQ_ShadowAOStrength = settings.ShadowAOStrength;
     scb.SQ_WorldAOStrength = settings.WorldAOStrength;
     scb.SQ_ShadowSoftness = settings.ShadowSoftness;

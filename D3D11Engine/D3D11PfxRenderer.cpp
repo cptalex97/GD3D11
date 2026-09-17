@@ -297,11 +297,12 @@ XRESULT D3D11PfxRenderer::RenderPostFXComposition(
         }
         XMStoreFloat4x4( &cb.InvView, XMMatrixInverse( nullptr, Engine::GAPI->GetViewMatrixXM() ) );
         cb.CameraPosition = Engine::GAPI->GetCameraPosition();
-        cb.HF_GlobalDensity = settings.FogGlobalDensity;
+        cb.HF_GlobalDensity = settings.FogGlobalDensity * GoucWeatherCur().Fog; // GOUC: weather/season
         cb.HF_HeightFalloff = settings.FogHeightFalloff;
 
-        float height = settings.FogHeight;
-        XMVECTOR color = XMLoadFloat3( settings.FogColorMod.toXMFLOAT3() );
+        float height = settings.FogHeight + GoucWeatherCur().FogH; // GOUC: weather/season
+        XMVECTOR color = XMVectorMultiply( XMLoadFloat3( settings.FogColorMod.toXMFLOAT3() ),
+            XMVectorSet( GoucWeatherCur().FogR, GoucWeatherCur().FogG, GoucWeatherCur().FogB, 1.0f ) ); // GOUC: weather/season
 
         float fnear = 15000.0f;
         float ffar = 60000.0f;

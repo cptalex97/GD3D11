@@ -11,6 +11,7 @@
 #include "RenderQueue.h"
 #include "RenderToTextureBuffer.h"
 #include "ShaderIDs.h"
+#include "GoucWeather.h"
 
 static const char* MENU_SETTINGS_FILE = "system\\GD3D11\\UserSettings.ini";
 const float INDOOR_LIGHT_DISTANCE_SCALE_FACTOR = 0.5f;

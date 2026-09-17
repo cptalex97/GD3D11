@@ -335,7 +335,7 @@ void GVegetationBox::RenderVegetation( const XMFLOAT3& eye ) {
     XMStoreFloat3( &G_NormalVS, XMVector3TransformNormal( XMVectorSet( 0.0f, 1.0f, 0.0f, 0.0f ), XMMatrixTranspose( Engine::GAPI->GetViewMatrixXM() ) ) );
     gcb.G_NormalVS = G_NormalVS;
     gcb.G_Time = Engine::GAPI->GetTimeSeconds();
-    gcb.G_WindStrength = Engine::GAPI->GetRendererState().RendererSettings.GlobalWindStrength;
+    gcb.G_WindStrength = Engine::GAPI->GetRendererState().RendererSettings.GlobalWindStrength * GoucWeatherCur().Wind; // GOUC
     GrassCB->UpdateBuffer( &gcb );
     GrassCB->BindToVertexShader( 1 );
 

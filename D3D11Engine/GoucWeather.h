@@ -245,6 +245,113 @@ inline void GoucWeatherUpdate() {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Lightning. A thunderstorm that only rains harder still reads as heavy rain, so the sky has to
+// flash and the flash has to light the world. The server decides WHEN (all players see the same
+// bolt), the trigger arrives the same way the weather does: a vob named "GOUC_LIGHTNING STR=1.6
+// MS=320", which the script removes again right after. The vob is never drawn.
+// ---------------------------------------------------------------------------------------------
+
+inline constexpr float GOUC_LIGHTNING_MAX_STRENGTH = 3.0f;
+inline constexpr float GOUC_LIGHTNING_MIN_MS = 60.0f;
+inline constexpr float GOUC_LIGHTNING_MAX_MS = 1500.0f;
+/** How much of the flash the sky gets on top of the scene light. The sky is what one looks at. */
+inline constexpr float GOUC_LIGHTNING_SKY_FACTOR = 1.6f;
+
+struct GoucLightningState {
+    DWORD StartMs = 0;
+    float Strength = 0.0f;   // 0 = nothing is flashing
+    float DurationMs = 0.0f;
+};
+
+inline GoucLightningState& GoucLightning() {
+    static GoucLightningState state;
+    return state;
+}
+
+/** Brightness added by a running flash, 0 while idle.
+ *  Two peaks and a fast decay: a real bolt flickers, a single ramp looks like a light switch. */
+inline float GoucLightningBoost() {
+    auto& s = GoucLightning();
+    if ( s.Strength <= 0.0f || s.DurationMs <= 0.0f ) {
+        return 0.0f;
+    }
+
+    const DWORD now = Toolbox::timeSinceStartMs();
+    const float t = static_cast<float>(now - s.StartMs) / s.DurationMs;
+    if ( t < 0.0f || t >= 1.0f ) {
+        s.Strength = 0.0f;
+        return 0.0f;
+    }
+
+    // 0.00-0.08 rise, 0.08-0.18 first peak, 0.18-0.30 dip, 0.30-0.45 second peak, then decay
+    float shape;
+    if ( t < 0.08f ) {
+        shape = t / 0.08f;
+    } else if ( t < 0.18f ) {
+        shape = 1.0f;
+    } else if ( t < 0.30f ) {
+        shape = 0.35f;
+    } else if ( t < 0.45f ) {
+        shape = 0.85f;
+    } else {
+        const float d = (t - 0.45f) / 0.55f;
+        shape = 0.85f * (1.0f - d) * (1.0f - d);
+    }
+    return s.Strength * shape;
+}
+
+/** Reads a trigger vob name. Returns false for anything that is not a lightning vob. */
+inline bool GoucLightningParseName( const std::string& rawName, float& strength, float& durationMs ) {
+    std::string name = rawName;
+    std::transform( name.begin(), name.end(), name.begin(),
+        []( unsigned char c ) { return static_cast<char>(std::toupper( c )); } );
+
+    static const char* const prefix = "GOUC_LIGHTNING";
+    if ( name.rfind( prefix, 0 ) != 0 ) {
+        return false;
+    }
+
+    strength = 1.5f;
+    durationMs = 320.0f;
+
+    size_t pos = 0;
+    while ( pos < name.size() ) {
+        size_t end = name.find_first_of( " ;", pos );
+        if ( end == std::string::npos ) {
+            end = name.size();
+        }
+        const std::string token = name.substr( pos, end - pos );
+        pos = end + 1;
+
+        const size_t eq = token.find( '=' );
+        if ( eq == std::string::npos || eq + 1 >= token.size() ) {
+            continue;
+        }
+        const std::string key = token.substr( 0, eq );
+        const std::string raw = token.substr( eq + 1 );
+        float value = 0.0f;
+        try {
+            value = std::stof( raw );
+        } catch ( ... ) {
+            continue;
+        }
+        if ( key == "STR" ) {
+            strength = std::clamp( value, 0.0f, GOUC_LIGHTNING_MAX_STRENGTH );
+        } else if ( key == "MS" ) {
+            durationMs = std::clamp( value, GOUC_LIGHTNING_MIN_MS, GOUC_LIGHTNING_MAX_MS );
+        }
+    }
+    return true;
+}
+
+inline void GoucLightningStrike( float strength, float durationMs ) {
+    auto& s = GoucLightning();
+    s.Strength = std::clamp( strength, 0.0f, GOUC_LIGHTNING_MAX_STRENGTH );
+    s.DurationMs = std::clamp( durationMs, GOUC_LIGHTNING_MIN_MS, GOUC_LIGHTNING_MAX_MS );
+    s.StartMs = Toolbox::timeSinceStartMs();
+}
+
 /** The colour grading pass only runs when it would change the image. */
 inline bool GoucWeatherGradeActive() {
     const auto& c = GoucWeatherCur();

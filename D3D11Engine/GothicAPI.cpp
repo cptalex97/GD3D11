@@ -2374,6 +2374,19 @@ void GothicAPI::OnAddVob( zCVob* vob, zCWorld* world ) {
                     }
                 }
 
+                // GOUC: lightning trigger. One-shot, carries strength and length in its name and
+                // is removed by the script right after; like the weather vob it is never drawn.
+                {
+                    float boltStrength = 0.0f;
+                    float boltMs = 0.0f;
+                    if ( GoucLightningParseName( vob->GetName(), boltStrength, boltMs ) ) {
+                        vi->IsGoucBarrier = true;
+                        vi->UpdateState();
+                        GoucLightningStrike( boltStrength, boltMs );
+                        break;
+                    }
+                }
+
                 // GOUC: the magic barrier bypasses sections, the BSP cache and the dynamic
                 // list, so neither draw distance nor instancing nor shadows touch it.
                 GoucBarrierParams barrierParams;

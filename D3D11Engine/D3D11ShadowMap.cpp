@@ -1377,9 +1377,10 @@ DS_ScreenQuadConstantBuffer D3D11ShadowMap::FillSunCSMConstantBuffer() const {
         settings.SunLightStrength,
         settings.RainSunLightStrength,
         std::min( 1.0f, rain * 2.0f ) );
-    // GOUC: weather/season sun tint and strength (GoucWeather.h)
+    // GOUC: weather/season sun tint and strength (GoucWeather.h). A lightning flash is added on
+    // top, not multiplied: during a thunderstorm the sun is dim, and a bolt has to light that up.
     scb.SQ_LightColor = float4( sunColor.x * GoucWeatherCur().SunR, sunColor.y * GoucWeatherCur().SunG,
-        sunColor.z * GoucWeatherCur().SunB, sunStrength * GoucWeatherCur().Sun );
+        sunColor.z * GoucWeatherCur().SunB, sunStrength * (GoucWeatherCur().Sun + GoucLightningBoost()) );
 
     for ( size_t cascadeIdx = 0; cascadeIdx < MAX_CSM_CASCADES; ++cascadeIdx ) {
         XMStoreFloat4x4( &scb.SQ_ShadowViewProj[cascadeIdx],
@@ -1516,9 +1517,9 @@ XRESULT D3D11ShadowMap::DrawWorldLights()
         std::min( 1.0f, rain * 2.0f ) );// Scale the darkening-factor faster here, so it
     // matches more with the increasing fog-density
 
-    // GOUC: weather/season sun tint and strength (GoucWeather.h)
+    // GOUC: weather/season sun tint and strength, plus the lightning flash (GoucWeather.h)
     scb.SQ_LightColor = float4( sunColor.x * GoucWeatherCur().SunR, sunColor.y * GoucWeatherCur().SunG,
-        sunColor.z * GoucWeatherCur().SunB, sunStrength * GoucWeatherCur().Sun );
+        sunColor.z * GoucWeatherCur().SunB, sunStrength * (GoucWeatherCur().Sun + GoucLightningBoost()) );
 
     // CSM: Alle Cascade-Matrizen setzen
 

@@ -143,6 +143,12 @@ void ImGuiShim::RenderLoop()
         // it rains (RAINAMT, GoucWeather.h), so only the floor is enforced -- more is still allowed.
         if ( goucForced.RainNumParticles < GOUC_WEATHER_MIN_RAIN_PARTICLES )
             goucForced.RainNumParticles = GOUC_WEATHER_MIN_RAIN_PARTICLES;
+        // HDR: off, and it cannot be switched on (server policy). Both the tone mapping pass
+        // (menu checkbox "HDR", off by default anyway) and the HDR10 output for HDR monitors,
+        // which is INI-only. Together with the contrast/brightness clamp below it closes the
+        // washed-out-night exploit for good.
+        goucForced.EnableHDR = false;
+        goucForced.HDR_Monitor = false;
         // Gamma (labeled "Contrast") & Brightness: only +/-0.1 around the 1.0 default.
         // The previous +/-0.5 range was NOT enough: contrast at its LOWER stop together with
         // brightness at its upper stop washes the image out and lifts the black point, which

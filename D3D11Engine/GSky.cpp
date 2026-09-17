@@ -301,8 +301,10 @@ XRESULT GSky::RenderSky() {
         wl.y = Toolbox::lerp( wl.y, mean, gw.SkyDesat );
         wl.z = Toolbox::lerp( wl.z, mean, gw.SkyDesat ) - 0.015f * gw.SkyCool;
         AtmosphereCB.AC_Wavelength = wl;
-        AtmosphereCB.AC_KrESun *= gw.SkySun;
-        AtmosphereCB.AC_KmESun *= gw.SkySun;
+        // A bolt lights the sky more than the ground -- that is what one actually looks at.
+        const float skySun = gw.SkySun + GoucLightningBoost() * GOUC_LIGHTNING_SKY_FACTOR;
+        AtmosphereCB.AC_KrESun *= skySun;
+        AtmosphereCB.AC_KmESun *= skySun;
     }
     AtmosphereCB.AC_SpherePosition = sp;
     if ( !Engine::GAPI->GetRendererState().RendererSettings.EnableRainEffects ) {

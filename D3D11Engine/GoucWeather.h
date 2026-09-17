@@ -336,13 +336,15 @@ inline float GoucLightningBoost() {
     return s.Strength * shape;
 }
 
-/** Hard ceiling for the sky brightness during a bolt. SKYSUN itself is clamped to 1.10, but
- *  the boost is ADDED on top and then multiplies AC_KrESun and AC_KmESun -- the Rayleigh and
- *  Mie sun constants of the atmosphere model. At full strength that was 1.10 + 3.0 * 1.6 =
- *  5.9, so nearly six times the scattering: the model saturates and the sky flips to deep
- *  red, flickering with the bolt (reported in game 18.09.2026, "tiefrotes Flackern ueber die
- *  ganze Karte" when the weather turned). A bolt has to brighten the sky, not repaint it. */
-inline constexpr float GOUC_LIGHTNING_SKY_MAX = 1.90f;
+/** Hard ceiling for the sky brightness during a bolt -- a guard rail, NOT a dimmer.
+ *  The arithmetic it has to leave untouched: the server sends at most strength 2.4 (near
+ *  bolt), the sky gets 1.6x of it, and a thunderstorm sky sits at SKYSUN 0.80. The peak of a
+ *  near bolt is therefore 0.80 + 2.4 * 1.6 = 4.64, and that is the flash cpt_alex explicitly
+ *  liked -- it stays exactly as it is. The ceiling only catches values the server does not
+ *  send today (up to strength 3.0 would give 5.9), because the boost multiplies AC_KrESun and
+ *  AC_KmESun, the Rayleigh and Mie sun constants: push those far enough and the atmosphere
+ *  model saturates into deep red. */
+inline constexpr float GOUC_LIGHTNING_SKY_MAX = 5.00f;
 
 /** Sky brightness including a running bolt, capped. */
 inline float GoucLightningSkySun( float baseSkySun ) {

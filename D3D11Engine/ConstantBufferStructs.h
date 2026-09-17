@@ -147,6 +147,13 @@ struct HDRSettingsConstantBuffer {
     float HDR_LumWhite;
     float HDR_Threshold;
     float HDR_BloomStrength;
+    // GOUC: floor for the auto exposure (GoucWeather.h). The padding keeps this struct
+    // at the 32 bytes the HLSL cbuffer rounds up to -- UpdateBuffer copies the size the
+    // buffer was created with, so both sides have to agree.
+    float HDR_MinLum;
+    float HDR_Pad0;
+    float HDR_Pad1;
+    float HDR_Pad2;
 };
 
 struct ViewportInfoConstantBuffer {

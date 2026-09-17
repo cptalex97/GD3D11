@@ -11,12 +11,26 @@ cbuffer HDR_Settings : register(b0)
 	float HDR_LumWhite;
 	float HDR_Threshold;
 	float HDR_BloomStrength;
+	float HDR_MinLum;
+	float HDR_Pad0;
+	float HDR_Pad1;
+	float HDR_Pad2;
 };
+
+/** GOUC: every tone mapper below divides by the average scene luminance -- that is the
+ *  auto exposure, and in a dark scene the divisor goes towards zero, so the image is
+ *  lifted without limit. That is what turns night into day and undoes the dimming the
+ *  weather system sets. HDR_MinLum caps how far it may lift; 0 = untouched vanilla. */
+float GoucLumAvg(Texture2D lumTex, SamplerState samplerState)
+{
+	float fLumAvg = lumTex.SampleLevel(samplerState, float2(0.5f, 0.5f), 9).r;
+	return max(fLumAvg, HDR_MinLum);
+}
 
 float3 ToneMap_Reinhard(float3 vColor, Texture2D lumTex, SamplerState samplerState)
 {
 	// Get the calculated average luminance
-	float fLumAvg = lumTex.SampleLevel(samplerState, float2(0.5f, 0.5f), 9).r;
+	float fLumAvg = GoucLumAvg(lumTex, samplerState);   // GOUC: mit Untergrenze
 
 	// Calculate the luminance of the current pixel
 	float fLumPixel = dot(vColor, LUM_CONVERT); //?.
@@ -33,7 +47,7 @@ float3 ToneMap_Reinhard(float3 vColor, Texture2D lumTex, SamplerState samplerSta
 float3 ToneMap_jafEq4(float3 vColor, Texture2D lumTex, SamplerState samplerState)
 {
 	// Get the calculated average luminance
-	float fLumAvg = lumTex.SampleLevel(samplerState, float2(0.5f, 0.5f), 9).r;
+	float fLumAvg = GoucLumAvg(lumTex, samplerState);   // GOUC: mit Untergrenze
 
 	// Calculate the luminance of the current pixel
 	float fLumPixel = dot(vColor, LUM_CONVERT);
@@ -60,7 +74,7 @@ float3 Uncharted2TonemapOperator(float3 x)
 
 float3 Uncharted2Tonemap(float3 vColor, Texture2D lumTex, SamplerState samplerState) : COLOR
 {
-	float fLumAvg = lumTex.SampleLevel(samplerState, float2(0.5f, 0.5f), 9).r;
+	float fLumAvg = GoucLumAvg(lumTex, samplerState);   // GOUC: mit Untergrenze
 	
 	vColor *= (HDR_MiddleGray / fLumAvg);  // Exposure Adjustment
 
@@ -90,7 +104,7 @@ float3 ACESFilmTonemap(float3 vColor, Texture2D lumTex, SamplerState samplerStat
 {
 	float3 LUM_CONVERT  = float3(0.2125f, 0.7154f, 0.0721f);
 	
-	float fLumAvg = lumTex.SampleLevel(samplerState, float2(0.5f, 0.5f), 9).r;
+	float fLumAvg = GoucLumAvg(lumTex, samplerState);   // GOUC: mit Untergrenze
 	
 	// Calculate the luminance of the current pixel
 	float fLumPixel = dot(vColor, LUM_CONVERT);
@@ -123,7 +137,7 @@ float3 PerceptualQuantizerTonemapOperator(float3 x) //broken with gray color
 
 float3 PerceptualQuantizerTonemap(float3 vColor, Texture2D lumTex, SamplerState samplerState) : COLOR //broken with gray color
 {
-	float fLumAvg = lumTex.SampleLevel(samplerState, float2(0.5f, 0.5f), 9).r;
+	float fLumAvg = GoucLumAvg(lumTex, samplerState);   // GOUC: mit Untergrenze
 	
 	vColor *= (HDR_MiddleGray / fLumAvg);  // Exposure Adjustment
 
@@ -139,7 +153,7 @@ float3 PerceptualQuantizerTonemap(float3 vColor, Texture2D lumTex, SamplerState 
 float3 ToneMap_Simple(float3 vColor, Texture2D lumTex, SamplerState samplerState)
 {
 	// Get the calculated average luminance
-	float fLumAvg = lumTex.SampleLevel(samplerState, float2(0.5f, 0.5f), 9).r;
+	float fLumAvg = GoucLumAvg(lumTex, samplerState);   // GOUC: mit Untergrenze
 	
 	vColor *= HDR_MiddleGray/(fLumAvg + 0.001f);
 	vColor /= (1.0f + vColor);
@@ -190,7 +204,7 @@ float3 ACESFittedTonemapOperator(float3 color)
 
 float3 ACESFittedTonemap(float3 vColor, Texture2D lumTex, SamplerState samplerState) : COLOR
 {	
-	float fLumAvg = lumTex.SampleLevel(samplerState, float2(0.5f, 0.5f), 9).r;
+	float fLumAvg = GoucLumAvg(lumTex, samplerState);   // GOUC: mit Untergrenze
 	
 	vColor *= (HDR_MiddleGray / fLumAvg);  // Exposure Adjustment
 

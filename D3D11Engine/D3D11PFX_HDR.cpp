@@ -75,6 +75,7 @@ XRESULT D3D11PFX_HDR::Render( ID3D11RenderTargetView* output, ID3D11ShaderResour
     hcb.HDR_MiddleGray = Engine::GAPI->GetRendererState().RendererSettings.HDRMiddleGray;
     hcb.HDR_Threshold = Engine::GAPI->GetRendererState().RendererSettings.BloomThreshold;
     hcb.HDR_BloomStrength = Engine::GAPI->GetRendererState().RendererSettings.BloomStrength;
+    hcb.HDR_MinLum = GoucHdrMinLum(); // GOUC: floor for the auto exposure (GoucWeather.h)
     hps->GetBuffer( "HDR_Settings" ).Update( &hcb ).Bind();
 
     FxRenderer->CopyTextureToRTV( tempBuffer->GetShaderResView(), output, engine->GetResolution(), true );
@@ -103,6 +104,7 @@ void D3D11PFX_HDR::CreateBloom( RenderToTextureBuffer* lum, RenderToTextureBuffe
 	hcb.HDR_LumWhite = Engine::GAPI->GetRendererState().RendererSettings.HDRLumWhite;
 	hcb.HDR_MiddleGray = Engine::GAPI->GetRendererState().RendererSettings.HDRMiddleGray;
 	hcb.HDR_Threshold = Engine::GAPI->GetRendererState().RendererSettings.BloomThreshold;
+	hcb.HDR_MinLum = GoucHdrMinLum(); // GOUC: same floor as the tone mapping pass
 	tonemapPS->GetBuffer( "HDR_Settings" ).Update( &hcb ).Bind();
 
 	lum->BindToPixelShader( engine->GetContext().Get(), 1 );

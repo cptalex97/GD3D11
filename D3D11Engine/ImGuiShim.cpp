@@ -143,11 +143,14 @@ void ImGuiShim::RenderLoop()
         // it rains (RAINAMT, GoucWeather.h), so only the floor is enforced -- more is still allowed.
         if ( goucForced.RainNumParticles < GOUC_WEATHER_MIN_RAIN_PARTICLES )
             goucForced.RainNumParticles = GOUC_WEATHER_MIN_RAIN_PARTICLES;
-        // HDR: off, and it cannot be switched on (server policy). Both the tone mapping pass
-        // (menu checkbox "HDR", off by default anyway) and the HDR10 output for HDR monitors,
-        // which is INI-only. Together with the contrast/brightness clamp below it closes the
-        // washed-out-night exploit for good.
-        goucForced.EnableHDR = false;
+        // HDR: the menu checkbox is ALLOWED again (players asked for it). What made it a
+        // problem was the auto exposure, and that now has a floor in the shader itself
+        // (GoucHdrMinLum, hdr.h) -- so a dark scene can no longer be lifted at will.
+        // What stays forced: the exposure target may be lowered but not raised, and the
+        // HDR10 output for HDR monitors stays off, because there the display decides how
+        // bright the image ends up and we cannot clamp that.
+        if ( goucForced.HDRMiddleGray > GOUC_HDR_MAX_MIDDLEGRAY )
+            goucForced.HDRMiddleGray = GOUC_HDR_MAX_MIDDLEGRAY;
         goucForced.HDR_Monitor = false;
         // Gamma (labeled "Contrast") & Brightness: only +/-0.1 around the 1.0 default.
         // The previous +/-0.5 range was NOT enough: contrast at its LOWER stop together with

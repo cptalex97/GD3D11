@@ -33,6 +33,7 @@ struct GoucWeatherParams {
     float SunB = 1.0f;      // SUNB     sun light tint, blue
     float Sun = 1.0f;       // SUN      sun light strength
     float Shadow = 1.0f;    // SHADOW   dynamic shadow strength (overcast = softer)
+    float HdrMin = 0.0f;    // HDRMIN   floor for the HDR auto exposure, 0 = untouched
     float Fog = 1.0f;       // FOG      fog density
     float FogH = 0.0f;      // FOGH     fog height offset in cm
     float FogR = 1.0f;      // FOGR     fog tint, red
@@ -66,6 +67,7 @@ inline const GoucWeatherField GOUC_WEATHER_FIELDS[] = {
     { "SUNB",     &GoucWeatherParams::SunB,     0.85f,   1.15f },
     { "SUN",      &GoucWeatherParams::Sun,      0.50f,   1.20f },
     { "SHADOW",   &GoucWeatherParams::Shadow,   0.30f,   1.00f },
+    { "HDRMIN",   &GoucWeatherParams::HdrMin,   0.00f,   0.50f },
     { "FOG",      &GoucWeatherParams::Fog,      0.50f,   8.00f },
     { "FOGH",     &GoucWeatherParams::FogH,  -3000.0f, 8000.0f },
     { "FOGR",     &GoucWeatherParams::FogR,     0.80f,   1.20f },
@@ -382,6 +384,26 @@ inline void GoucLightningStrike( float strength, float durationMs ) {
     s.Strength = std::clamp( strength, 0.0f, GOUC_LIGHTNING_MAX_STRENGTH );
     s.DurationMs = std::clamp( durationMs, GOUC_LIGHTNING_MIN_MS, GOUC_LIGHTNING_MAX_MS );
     s.StartMs = Toolbox::timeSinceStartMs();
+}
+
+// ---------------------------------------------------------------------------------------------
+// HDR. The tone mapping divides by the average scene luminance -- an auto exposure. In a dark
+// scene the divisor goes towards zero and the image is lifted without limit: night becomes day,
+// and the dimming the weather sets is undone. Players asked for HDR back, so instead of forcing
+// the switch off the exposure gets a floor: HDR stays, the night stays dark.
+// ---------------------------------------------------------------------------------------------
+
+/** Floor that applies even without a weather control vob. A dark scene may still be lifted,
+ *  just not arbitrarily. The server can raise it through the HDRMIN token (GoucWeatherCur). */
+inline constexpr float GOUC_HDR_MIN_LUM_FLOOR = 0.05f;
+
+/** Exposure target. The default is 0.8; a higher value in the INI would brighten everything,
+ *  so it is capped rather than forced -- less is allowed, more is not. */
+inline constexpr float GOUC_HDR_MAX_MIDDLEGRAY = 0.80f;
+
+/** Floor for the auto exposure, handed to the HDR shaders (hdr.h). */
+inline float GoucHdrMinLum() {
+    return std::max( GOUC_HDR_MIN_LUM_FLOOR, GoucWeatherCur().HdrMin );
 }
 
 /** The colour grading pass only runs when it would change the image. */

@@ -109,6 +109,9 @@ XRESULT D3D11Effect::DrawRain() {
     // artificially increase the number of particles for snow, to make it look better.
     // Snowflakes are bigger and slower than raindrops, so we can get away with less particles for rain, but for snow we need more to make it look good.
     UINT numParticles = state.RendererSettings.RainNumParticles;
+    // GOUC: heavy rain in a thunderstorm. The shader drops particles by weight^3, so at full
+    // weight every existing particle already falls -- more rain has to come from more particles.
+    numParticles = static_cast<UINT>( numParticles * GoucWeatherRainParticleFactor() );
 
     static float lastRadius = state.RendererSettings.RainRadiusRange;
     static float lastHeight = state.RendererSettings.RainHeightRange;
@@ -303,6 +306,9 @@ XRESULT D3D11Effect::DrawRain_CS() {
     // artificially increase the number of particles for snow, to make it look better.
     // Snowflakes are bigger and slower than raindrops, so we can get away with less particles for rain, but for snow we need more to make it look good.
     UINT numParticles = state.RendererSettings.RainNumParticles;
+    // GOUC: heavy rain in a thunderstorm. The shader drops particles by weight^3, so at full
+    // weight every existing particle already falls -- more rain has to come from more particles.
+    numParticles = static_cast<UINT>( numParticles * GoucWeatherRainParticleFactor() );
 
     static float lastRadius = state.RendererSettings.RainRadiusRange;
     static float lastHeight = state.RendererSettings.RainHeightRange;

@@ -41,6 +41,7 @@ struct GoucWeatherParams {
     float Wind = 1.0f;      // WIND     vegetation wind strength
     float Wet = 0.0f;       // WET      minimum scene wetness (dew, wet ground after rain)
     float Rain = 1.0f;      // RAIN     rain intensity (drizzle < 1)
+    float RainAmt = 1.0f;   // RAINAMT  rain particle count factor (heavy rain above 1)
     float RainX = 0.0f;     // RAINX    added rain velocity (slanted rain in a storm)
     float RainZ = 0.0f;     // RAINZ
     float SkyDesat = 0.0f;  // SKYDESAT sky colour towards grey
@@ -73,6 +74,7 @@ inline const GoucWeatherField GOUC_WEATHER_FIELDS[] = {
     { "WIND",     &GoucWeatherParams::Wind,     0.50f,   3.00f },
     { "WET",      &GoucWeatherParams::Wet,      0.00f,   1.00f },
     { "RAIN",     &GoucWeatherParams::Rain,     0.20f,   1.00f },
+    { "RAINAMT",  &GoucWeatherParams::RainAmt,  1.00f,   3.00f },
     { "RAINX",    &GoucWeatherParams::RainX, -1500.0f, 1500.0f },
     { "RAINZ",    &GoucWeatherParams::RainZ, -1500.0f, 1500.0f },
     { "SKYDESAT", &GoucWeatherParams::SkyDesat, 0.00f,   0.60f },
@@ -113,6 +115,27 @@ inline const GoucWeatherParams& GoucWeatherCur() {
 /** True while the server controls the weather. The renderer then leaves the rain times alone. */
 inline bool GoucWeatherControlsRain() {
     return GoucWeather().Active;
+}
+
+/** Fewest rain particles a client may end up with: the F11 menu and the INI can both set
+ *  [Rain] NumParticles, and 0 would simply switch the rain off. Weather is server policy,
+ *  so a floor is enforced instead (GothicGraphicsState default is 50000). */
+inline constexpr UINT GOUC_WEATHER_MIN_RAIN_PARTICLES = 50000;
+
+/** Rain particle factor for the rain effect. The particle buffers are rebuilt whenever the
+ *  count changes, so the faded value is snapped to coarse steps: a 60 s fade would otherwise
+ *  rebuild them every frame. 0.5 steps mean at most three rebuilds while the weather fades
+ *  from clear to a storm; the drop textures are loaded once and are not part of that. */
+inline float GoucWeatherRainParticleFactor() {
+    const float amt = GoucWeather().Current.RainAmt;
+    if ( amt <= 1.0f ) {
+        return 1.0f;
+    }
+    const float step = 0.5f;
+    float snapped = std::floor( amt / step ) * step;
+    if ( snapped < 1.0f ) snapped = 1.0f;
+    if ( snapped > 3.0f ) snapped = 3.0f;
+    return snapped;
 }
 
 /** Reads a control vob name. Gothic stores object names in upper case; unknown keys are ignored. */

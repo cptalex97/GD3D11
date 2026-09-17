@@ -138,6 +138,11 @@ void ImGuiShim::RenderLoop()
         goucForced.DrawFog = true;
         goucForced.EnableRain = true;
         goucForced.EnableRainEffects = true;
+        // Rain particle count: the menu below and [Rain] NumParticles in the INI both reach it, and
+        // 0 particles is rain switched off through the back door. The server weather decides how hard
+        // it rains (RAINAMT, GoucWeather.h), so only the floor is enforced -- more is still allowed.
+        if ( goucForced.RainNumParticles < GOUC_WEATHER_MIN_RAIN_PARTICLES )
+            goucForced.RainNumParticles = GOUC_WEATHER_MIN_RAIN_PARTICLES;
         // Gamma (labeled "Contrast") & Brightness: only +/-0.1 around the 1.0 default.
         // The previous +/-0.5 range was NOT enough: contrast at its LOWER stop together with
         // brightness at its upper stop washes the image out and lifts the black point, which

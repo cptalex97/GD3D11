@@ -411,8 +411,12 @@ inline void GoucLightningStrike( float strength, float durationMs ) {
 // ---------------------------------------------------------------------------------------------
 
 /** Floor that applies even without a weather control vob. A dark scene may still be lifted,
- *  just not arbitrarily. The server can raise it through the HDRMIN token (GoucWeatherCur). */
-inline constexpr float GOUC_HDR_MIN_LUM_FLOOR = 0.05f;
+ *  just not arbitrarily. The server can raise it through the HDRMIN token (GoucWeatherCur).
+ *  0.12, tuned in game (v14). The first value, 0.05, did NOTHING: PS_PFX_LumConvert already
+ *  clamps every pixel to MIN_LUM = 0.05 before the average is built, so the average can never
+ *  drop below it -- measured, HDR still made the night 2.5x as bright. At 0.12 the lit parts of
+ *  a night scene are as bright as without HDR; only light sources glow a little more. */
+inline constexpr float GOUC_HDR_MIN_LUM_FLOOR = 0.12f;
 
 /** Exposure target. The default is 0.8; a higher value in the INI would brighten everything,
  *  so it is capped rather than forced -- less is allowed, more is not. */

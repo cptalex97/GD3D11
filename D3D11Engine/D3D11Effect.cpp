@@ -537,6 +537,28 @@ XRESULT D3D11Effect::DrawRainShadowmap() {
     if ( XMVectorGetX( XMVector3LengthSq( rainVelocity ) ) < 0.0001f ) {
         rainVelocity = XMVectorSet( 0, -1, 0, 0 );
     }
+
+    // GOUC 23.09.2026: build the rain map at most 17 degrees off vertical (tan 17 = 0.3057).
+    // Above ~18.2 degrees the world mesh (buildings, caves) is missing from the rain map and rain
+    // falls through roofs -- 18.2 is exactly where the up vector below switches (|dot| 0.95).
+    // Measured in game: 14 and 17.7 degrees dry, 19.8 partly wet, 29 (storm RAINX 300) wet.
+    // Root cause still open: frustum, matrices and multi-draw are ruled out, vobs stay in the map.
+    // The drops keep their full slant (DrawRain_CS / transform feedback read RainX/RainZ
+    // themselves); only the roof test looks up along the steeper direction.
+    {
+        constexpr float GOUC_RAINMAP_MAX_TILT_TAN = 0.3057f;
+        XMFLOAT3 v;
+        XMStoreFloat3( &v, rainVelocity );
+        const float down = -v.y;
+        const float horiz = sqrtf( v.x * v.x + v.z * v.z );
+        if ( down <= 0.0001f ) {
+            rainVelocity = XMVectorSet( 0, -1, 0, 0 );
+        } else if ( horiz > down * GOUC_RAINMAP_MAX_TILT_TAN ) {
+            const float s = (down * GOUC_RAINMAP_MAX_TILT_TAN) / horiz;
+            rainVelocity = XMVectorSet( v.x * s, v.y, v.z * s, 0 );
+        }
+    }
+
     XMVECTOR dir = XMVector3Normalize( rainVelocity * -1.0f );
 
     // Set the camera height to the highest point in this section

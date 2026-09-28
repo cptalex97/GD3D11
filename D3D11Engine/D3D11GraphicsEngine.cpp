@@ -5446,7 +5446,8 @@ void XM_CALLCONV D3D11GraphicsEngine::DrawWorldAround(
     bool noNPCs, std::list<VobInfo*>* renderedVobs,
     std::list<SkeletalVobInfo*>* renderedMobs,
     std::vector<std::pair<MeshKey, MeshInfo*>>* worldMeshCache,
-    unsigned int casterMask ) {
+    unsigned int casterMask,
+    const std::function<bool( zCVob* )>& ignoreVob ) {
 
     // Setup renderstates
     Engine::GAPI->GetRendererState().RasterizerState.SetDefault();
@@ -5672,6 +5673,11 @@ void XM_CALLCONV D3D11GraphicsEngine::DrawWorldAround(
         
         auto buffer = GetActiveVS()->GetBuffer(1).Bind();
         for ( auto const& vobInfo : rl ) {
+            // GOUC/upstream #414: a light must not be shadowed by its own vob tree
+            if ( ignoreVob && ignoreVob( vobInfo->Vob ) ) {
+                continue;
+            }
+
             // Bind per-instance buffer
             vobInfo->UpdateVobConstantBuffer(cb);
             buffer.Update(&cb, sizeof(cb));
@@ -5751,7 +5757,7 @@ void XM_CALLCONV D3D11GraphicsEngine::DrawWorldAround(
         // At this point eiter renderedMobs or rndVob is filled with something
         std::list<SkeletalVobInfo*>& rl = renderedMobs != nullptr ? *renderedMobs : rndVob;
         for ( auto it : rl ) {
-            Engine::GAPI->DrawSkeletalMeshVob( it, FLT_MAX );
+            Engine::GAPI->DrawSkeletalMeshVob( it, FLT_MAX, true, ignoreVob );
         }
     }
 
@@ -5780,7 +5786,7 @@ void XM_CALLCONV D3D11GraphicsEngine::DrawWorldAround(
                     continue;
                 }
 
-                Engine::GAPI->DrawSkeletalMeshVob( skeletalMeshVob, FLT_MAX );
+                Engine::GAPI->DrawSkeletalMeshVob( skeletalMeshVob, FLT_MAX, true, ignoreVob );
             }
         }
     }
@@ -5791,7 +5797,8 @@ void XM_CALLCONV D3D11GraphicsEngine::DrawWorldAround_Layered(
     bool noNPCs, std::list<VobInfo*>* renderedVobs,
     std::list<SkeletalVobInfo*>* renderedMobs,
     std::vector<std::pair<MeshKey, MeshInfo*>>* worldMeshCache,
-    unsigned int casterMask ) {
+    unsigned int casterMask,
+    const std::function<bool( zCVob* )>& ignoreVob ) {
 
     // Setup renderstates
     Engine::GAPI->GetRendererState().RasterizerState.SetDefault();
@@ -6023,6 +6030,11 @@ void XM_CALLCONV D3D11GraphicsEngine::DrawWorldAround_Layered(
 
         D3D11Texture* lastBoundTexture = nullptr;
         for ( auto const& vobInfo : rl ) {
+            // GOUC/upstream #414: a light must not be shadowed by its own vob tree
+            if ( ignoreVob && ignoreVob( vobInfo->Vob ) ) {
+                continue;
+            }
+
             // Bind per-instance buffer
             vobInfo->UpdateVobConstantBuffer(cb);
             buffer.Update(&cb, sizeof(cb));
@@ -6104,7 +6116,7 @@ void XM_CALLCONV D3D11GraphicsEngine::DrawWorldAround_Layered(
         std::list<SkeletalVobInfo*>& rl = renderedMobs != nullptr ? *renderedMobs : rndVob;
         auto _ = Engine::GraphicsEngine->RecordGraphicsEvent( GE_NAME( "Draw static skeletal meshes (layered)" ) );
         for ( auto it : rl ) {
-            Engine::GAPI->DrawSkeletalMeshVob_Layered( it, FLT_MAX );
+            Engine::GAPI->DrawSkeletalMeshVob_Layered( it, FLT_MAX, true, ignoreVob );
         }
     }
 
@@ -6133,7 +6145,7 @@ void XM_CALLCONV D3D11GraphicsEngine::DrawWorldAround_Layered(
                     continue;
                 }
 
-                Engine::GAPI->DrawSkeletalMeshVob_Layered( skeletalMeshVob, FLT_MAX );
+                Engine::GAPI->DrawSkeletalMeshVob_Layered( skeletalMeshVob, FLT_MAX, true, ignoreVob );
             }
         }
     }
@@ -7991,10 +8003,11 @@ void XM_CALLCONV D3D11GraphicsEngine::RenderShadowCube(
     std::list<SkeletalVobInfo*>* renderedMobs,
     std::vector<std::pair<MeshKey, MeshInfo*>>* worldMeshCache,
     bool clearDepth,
-    unsigned int casterMask ) {
+    unsigned int casterMask,
+    const std::function<bool( zCVob* )>& ignoreVob ) {
     
     ShadowMaps->RenderShadowCube( position, range, targetCube, face, debugRTV,
-        cullFront, indoor, noNPCs, renderedVobs, renderedMobs, worldMeshCache, clearDepth, casterMask );
+        cullFront, indoor, noNPCs, renderedVobs, renderedMobs, worldMeshCache, clearDepth, casterMask, ignoreVob );
 }
 
 /** Renders the shadowmaps for the sun */

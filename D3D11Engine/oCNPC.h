@@ -14,6 +14,16 @@ enum oCNPCFlags : int
     NPC_FLAG_GHOST = (1 << 2)
 };
 
+// Upstream #414: an inventory slot of an NPC (ZS_LEFTHAND etc.)
+struct TNpcSlot {
+    zSTRING name;
+    int inInventory;
+    int tmpLevel;
+    zSTRING itemName;
+    zCVob* vob;
+    int _rest;
+};
+
 class oCNPC;
 struct oCNpc_States {
 #ifdef BUILD_GOTHIC_1_CLASSIC
@@ -95,7 +105,16 @@ public:
         reinterpret_cast<void( __fastcall* )( oCNPC*, int, zSTRING&, int )>( GothicMemoryLocations::oCNPC::GetName )( this, 0, str, i );
         return str;
     }
-    
+
+    // Upstream #414. Returns nullptr on builds without a known address.
+    TNpcSlot* GetInvSlot( const zSTRING& name ) {
+        if constexpr ( GothicMemoryLocations::oCNPC::GetInvSlot_zString == 0 ) {
+            return nullptr;
+        } else {
+            return reinterpret_cast<TNpcSlot*( __fastcall* )( oCNPC*, int, const zSTRING& )>( GothicMemoryLocations::oCNPC::GetInvSlot_zString )( this, 0, name );
+        }
+    }
+
 #ifdef BUILD_GOTHIC_1_CLASSIC
     oCNpc_States* GetStates() {
         return reinterpret_cast<oCNpc_States*>(THISPTR_OFFSET( GothicMemoryLocations::oCNPC::Offset_states ));

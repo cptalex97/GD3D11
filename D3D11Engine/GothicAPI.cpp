@@ -2635,8 +2635,52 @@ void GothicAPI::UpdateCompressBackBuffer() {
     reinterpret_cast<D3D11GraphicsEngine*>(Engine::GraphicsEngine)->OnResetBackBuffer();
 }
 
+/** GOUC: should this skeletal vob be skipped as a shadow caster for the light
+    whose vob tree is described by ignoreVob? True for vobs in that tree (upstream
+    #414, e.g. the belt light's player) and -- beyond upstream -- for the NPC that
+    carries such a vob in an inventory slot, i.e. the one holding the torch. With a
+    near plane of 15 cm, the carrier's body would otherwise shade half the room,
+    which is why the torch only lit one side unless "Static" was selected. */
+static bool GoucSkipSkeletalShadowCaster( zCVob* vob, const std::function<bool( zCVob* )>& ignoreVob ) {
+    if ( !ignoreVob || !vob ) {
+        return false;
+    }
+    if ( ignoreVob( vob ) ) {
+        return true;
+    }
+
+    oCNPC* npc = vob->As<oCNPC>();
+    if ( !npc ) {
+        return false;
+    }
+    zCModel* model = static_cast<zCModel*>(vob->GetVisual());
+    if ( !model ) {
+        return false;
+    }
+    auto nodeList = model->GetNodeList();
+    if ( !nodeList ) {
+        return false;
+    }
+    for ( int i = 0; i < nodeList->NumInArray; i++ ) {
+        zCModelNodeInst* node = nodeList->Array[i];
+        if ( !node || !node->ProtoNode || !node->ProtoNode->IsSlot() ) {
+            continue;
+        }
+        if ( TNpcSlot* slot = npc->GetInvSlot( node->ProtoNode->NodeName ) ) {
+            if ( slot->vob && ignoreVob( slot->vob ) ) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 /** Draws a skeletal mesh-vob */
-void GothicAPI::DrawSkeletalMeshVob( SkeletalVobInfo* vi, float distance, bool updateState ) {
+void GothicAPI::DrawSkeletalMeshVob( SkeletalVobInfo* vi, float distance, bool updateState, const std::function<bool( zCVob* )>& ignoreVob ) {
+    if ( GoucSkipSkeletalShadowCaster( vi->Vob, ignoreVob ) ) {
+        return;
+    }
+
     // TODO: Put this into the renderer!!
     D3D11GraphicsEngine* g = reinterpret_cast<D3D11GraphicsEngine*>(Engine::GraphicsEngine);
 
@@ -2875,7 +2919,11 @@ void GothicAPI::DrawSkeletalMeshVob( SkeletalVobInfo* vi, float distance, bool u
     RendererState.RendererInfo.FrameDrawnVobs++;
 }
 
-void GothicAPI::DrawSkeletalMeshVob_Layered( SkeletalVobInfo * vi, float distance, bool updateState ) {
+void GothicAPI::DrawSkeletalMeshVob_Layered( SkeletalVobInfo * vi, float distance, bool updateState, const std::function<bool( zCVob* )>& ignoreVob ) {
+    if ( GoucSkipSkeletalShadowCaster( vi->Vob, ignoreVob ) ) {
+        return;
+    }
+
     // TODO: Put this into the renderer!!
     D3D11GraphicsEngine* g = reinterpret_cast<D3D11GraphicsEngine*>(Engine::GraphicsEngine);
 

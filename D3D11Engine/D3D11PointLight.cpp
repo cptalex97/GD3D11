@@ -8,10 +8,75 @@
 #include "D3D11PfxRenderer.h"
 #include "zCVobLight.h"
 #include "BaseLineRenderer.h"
+#include "oCVisFX.h"
 #include "WorldConverter.h"
 #include "ThreadPool.h"
 
 const float LIGHT_COLORCHANGE_POS_MOD = 0.1f;
+
+// Upstream #414/#429/#415 (kirides/GD3D11), backported for GOUC: a light that
+// belongs to an item (a torch) must not be shadowed by its own vob tree. The
+// carrier NPC is additionally skipped in GoucSkipSkeletalShadowCaster (GothicAPI.cpp).
+namespace
+{
+    std::unordered_set<zCVob*> vobsToExclude = {};
+    const std::function<bool( zCVob* )> excludeVobsToExclude = []( zCVob* vob )
+    {
+        return vobsToExclude.contains( vob );
+    };
+
+    void CollectVobTreeToExclude( zCVob* vob ) {
+        while ( vob && vobsToExclude.emplace( vob ).second ) {
+            if ( auto vfx = vob->As<oCVisualFX>() ) {
+                if ( auto origin = vfx->GetOrigin() ) {
+                    vobsToExclude.emplace( origin );
+                    CollectVobTreeToExclude( origin );
+                }
+            }
+
+            vob = vob->GetVobParent();
+        }
+    }
+
+    // Returns false (nothing excluded) when self shadowing is allowed.
+    bool SetupVobsToExclude( const VobLightInfo* lightInfo ) {
+        vobsToExclude.clear();
+        if ( Engine::GAPI->GetRendererState().RendererSettings.AllowSelfShadowingPointlights ) {
+            return false;
+        }
+        CollectVobTreeToExclude( lightInfo->Vob );
+        return true;
+    }
+
+    // Evaluated on every use instead of caching a pointer: the origin vob may be
+    // removed at any time (upstream #429 crash fix).
+    bool GetHasOriginVob( const VobLightInfo* info ) {
+        if ( info->IsPFXVobLight ) {
+            return false;
+        }
+        zCVob* vob = info->Vob;
+        while ( auto parent = vob->GetVobParent() ) {
+            if ( auto visFx = parent->As<oCVisualFX>() ) {
+                if ( auto origin = visFx->GetOrigin(); origin && origin->As<oCItem>() ) {
+                    return true;
+                }
+            } else if ( parent->As<oCItem>() ) {
+                return true;
+            }
+            vob = parent;
+        }
+        return false;
+    }
+
+    const std::function<bool( zCVob* )>& ExcludeForLight( const VobLightInfo* info ) {
+        static const std::function<bool( zCVob* )> none = nullptr;
+        if ( GetHasOriginVob( info ) && SetupVobsToExclude( info ) ) {
+            return excludeVobsToExclude;
+        }
+        vobsToExclude.clear();
+        return none;
+    }
+}
 
 D3D11PointLight::D3D11PointLight( VobLightInfo* info, bool dynamicLight ) {
     LightInfo = info;
@@ -211,7 +276,8 @@ void D3D11PointLight::RenderStaticShadowPass( RenderToDepthStencilBuffer& target
         : SHADOW_CASTER_WORLD | SHADOW_CASTER_VOBS | SHADOW_CASTER_MOBS;
 
     engine->RenderShadowCube( LightInfo->Vob->GetPositionWorldXM(), range, target, nullptr, nullptr, false, LightInfo->IsIndoorVob, false,
-        &VobCache, &SkeletalVobCache, wc, clearDepth, staticCasterMask );
+        &VobCache, &SkeletalVobCache, wc, clearDepth, staticCasterMask, ExcludeForLight( LightInfo ) );
+    vobsToExclude.clear();
 }
 
 void D3D11PointLight::RenderAnimatedShadowPass( RenderToDepthStencilBuffer& target, bool clearDepth ) {
@@ -220,7 +286,8 @@ void D3D11PointLight::RenderAnimatedShadowPass( RenderToDepthStencilBuffer& targ
 
     const unsigned int animatedCasterMask = SHADOW_CASTER_ANIMATED;
     engine->RenderShadowCube( LightInfo->Vob->GetPositionWorldXM(), range, target, nullptr, nullptr, false, LightInfo->IsIndoorVob, false,
-        nullptr, nullptr, nullptr, clearDepth, animatedCasterMask );
+        nullptr, nullptr, nullptr, clearDepth, animatedCasterMask, ExcludeForLight( LightInfo ) );
+    vobsToExclude.clear();
 }
 
 /** Returns true if this is the first time that light is being rendered */
@@ -423,22 +490,27 @@ void D3D11PointLight::RenderFullCubemap() {
     }
 
     const int shadowMode = GetCurrentShadowMode();
-    if ( shadowMode >= GothicRendererSettings::PLS_STATIC_ONLY ) {
+    if ( shadowMode == GothicRendererSettings::PLS_STATIC_ONLY ) {
         RenderStaticShadowPass( *activeTarget, true );
         m_StaticShadowReady = true;
+        return;
     }
 
     if ( shadowMode == GothicRendererSettings::PLS_UPDATE_DYNAMIC ) {
         DepthStencilPool* dsPool = engine->GetPfxRenderer()->GetDepthStencilPool();
         AcquireStaticAsideShadowMap( dsPool, m_CurrentResolution );
 
-        if ( !m_StaticShadowReady || !m_StaticDepthCubemap ) {
+        // Upstream #429: the static aside is re-rendered whenever it is stale.
+        // Before, the static pass went into the active target first and marked the
+        // aside as ready, so a moving light (a carried torch) kept copying the
+        // static shadows of the position where the aside was first rendered.
+        if ( !m_StaticShadowReady ) {
             if ( m_StaticDepthCubemap ) {
                 RenderStaticShadowPass( *m_StaticDepthCubemap, true );
                 m_StaticShadowReady = true;
             } else {
+                // No aside buffer, the static shadows can't be cached.
                 RenderStaticShadowPass( *activeTarget, true );
-                m_StaticShadowReady = true;
             }
         }
 
@@ -447,14 +519,19 @@ void D3D11PointLight::RenderFullCubemap() {
         }
 
         RenderAnimatedShadowPass( *activeTarget, false );
-    } else if ( shadowMode == GothicRendererSettings::PLS_FULL ) {
+        return;
+    }
+
+    if ( shadowMode == GothicRendererSettings::PLS_FULL ) {
         auto wc = &WorldMeshCache;
         if ( WorldCacheInvalid ) {
             wc = nullptr;
         }
 
         engine->RenderShadowCube( LightInfo->Vob->GetPositionWorldXM(), LightInfo->Vob->GetLightRange(), *activeTarget,
-            nullptr, nullptr, false, LightInfo->IsIndoorVob, false, &VobCache, &SkeletalVobCache, wc, true, SHADOW_CASTER_ALL );
+            nullptr, nullptr, false, LightInfo->IsIndoorVob, false, &VobCache, &SkeletalVobCache, wc, true, SHADOW_CASTER_ALL,
+            ExcludeForLight( LightInfo ) );
+        vobsToExclude.clear();
     }
 }
 

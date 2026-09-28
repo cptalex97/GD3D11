@@ -12,5 +12,17 @@ public:
     static const zCClassDef* GetStaticClassDef() {
         return reinterpret_cast<const zCClassDef*>(GothicMemoryLocations::zCClassDef::oCVisualFX);
     }
+
+    // Upstream #414: the vob this effect originates from (item or caster).
+    zCVob* GetOrigin() const {
+        return *reinterpret_cast<zCVob**>(THISPTR_OFFSET( GothicMemoryLocations::oCVisualFX::Offset_origin ));
+    }
+};
+
+class oCItem : public zCVob {
+public:
+    static const zCClassDef* GetStaticClassDef() {
+        return reinterpret_cast<const zCClassDef*>(GothicMemoryLocations::zCClassDef::oCItem);
+    }
 };
 

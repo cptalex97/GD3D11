@@ -813,6 +813,9 @@ struct GothicRendererSettings {
         EnableWaterAnimation = false;
 
         GraphicsPreset = E_GraphicsPreset::GRAPHICS_CUSTOM;
+        // Upstream #415. GOUC keeps this off and does not expose it in the menu:
+        // a torch must not shadow itself or its carrier.
+        AllowSelfShadowingPointlights = false;
         ApplyAssaoPreset(1);
 
         ResetDebugSettings();
@@ -1050,6 +1053,7 @@ struct GothicRendererSettings {
     E_AntiAliasingMode AntiAliasingMode;
     E_SharpeningMode SharpeningMode;
     E_GraphicsPreset GraphicsPreset;
+    bool AllowSelfShadowingPointlights;
     
     struct {
         struct {

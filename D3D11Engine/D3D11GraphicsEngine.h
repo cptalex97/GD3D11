@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include "D3D11GraphicsEngineBase.h"
 #include "D3D11DeferredRenderer.h"
 #include "D3D11ForwardPlusRenderer.h"
@@ -285,14 +286,16 @@ public:
         bool indoor = false,
         bool noNPCs = false,
         std::list<VobInfo*>* renderedVobs = nullptr, std::list<SkeletalVobInfo*>* renderedMobs = nullptr, std::vector<std::pair<MeshKey, MeshInfo*>>* worldMeshCache = nullptr,
-        unsigned int casterMask = SHADOW_CASTER_ALL );
+        unsigned int casterMask = SHADOW_CASTER_ALL,
+        const std::function<bool( zCVob* )>& ignoreVob = nullptr );
     void XM_CALLCONV DrawWorldAround_Layered( FXMVECTOR position,
         float range,
         bool cullFront = true,
         bool indoor = false,
         bool noNPCs = false,
         std::list<VobInfo*>* renderedVobs = nullptr, std::list<SkeletalVobInfo*>* renderedMobs = nullptr, std::vector<std::pair<MeshKey, MeshInfo*>>* worldMeshCache = nullptr,
-        unsigned int casterMask = SHADOW_CASTER_ALL );
+        unsigned int casterMask = SHADOW_CASTER_ALL,
+        const std::function<bool( zCVob* )>& ignoreVob = nullptr );
 
     /** Update morph mesh visual */
     void UpdateMorphMeshVisual();
@@ -324,7 +327,8 @@ public:
         bool noNPCs = false,
         std::list<VobInfo*>* renderedVobs = nullptr, std::list<SkeletalVobInfo*>* renderedMobs = nullptr, std::vector<std::pair<MeshKey, MeshInfo*>>* worldMeshCache = nullptr,
         bool clearDepth = true,
-        unsigned int casterMask = SHADOW_CASTER_ALL );
+        unsigned int casterMask = SHADOW_CASTER_ALL,
+        const std::function<bool( zCVob* )>& ignoreVob = nullptr );
 
     /** Updates the occlusion for the bsp-tree */
     void UpdateOcclusion();

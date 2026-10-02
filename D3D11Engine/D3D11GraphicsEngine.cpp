@@ -1137,8 +1137,12 @@ XRESULT D3D11GraphicsEngine::RecreateBuffers() {
     OnResetBackBuffer();
 
     // actual native-resolution backbuffer for UI and copy operations !!
+    // GOUC: no UAV bind flag. Typed UAVs for BGRA8 are optional on FL11 hardware; without
+    // them CreateTexture2D fails with E_INVALIDARG and this buffer never exists -> black
+    // screen with working sound (GeForce GT 750M, upstream #491 / cfea7c54). Nothing writes
+    // this buffer through a UAV: sharpen, CAS, FSR and the final copy all use its RTV.
     Backbuffer = std::make_unique<RenderToTextureBuffer>( GetDevice().Get(), Resolution.x, Resolution.y, DXGI_FORMAT_ENGINE_SWAPCHAIN, nullptr, DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_UNKNOWN, 1, 1,
-    D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE | (Device->GetFeatureLevel() >= D3D_FEATURE_LEVEL_11_0 ? D3D11_BIND_UNORDERED_ACCESS : 0) );
+    D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE );
 
     m_SwapchainDepthStencilBuffer = std::make_unique<RenderToDepthStencilBuffer>(
         GetDevice().Get(), Resolution.x, Resolution.y, DXGI_FORMAT_R32_TYPELESS, nullptr,
@@ -4549,8 +4553,7 @@ XRESULT D3D11GraphicsEngine::OnStartWorldRendering() {
                     case GothicRendererSettings::SHARPEN_SIMPLE:
                         {
                             // Sharpen reads the scene texture and writes Backbuffer directly
-                            // (compute UAV on FeatureLevel 11+, pixel-shader RTV fallback on
-                            // FeatureLevel 10 - selected inside RenderSimpleSharpen), so no
+                            // through its RTV (pixel shader, see D3D11PFX_SimpleSharpen), so no
                             // pre-copy into Backbuffer is needed.
                             auto _ = RecordGraphicsEvent( GE_NAME( "ApplySimpleSharpen" ) );
                             PfxRenderer->RenderSimpleSharpen( backbufferTex->GetShaderResView(), GetBackbufferResolution(), Backbuffer.get(), GetBackbufferResolution() );

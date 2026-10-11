@@ -2075,10 +2075,22 @@ static bool ParseGoucBarrierName( const std::string& rawName, GoucBarrierParams&
 }
 
 /** Called when a VOB got removed from the world */
-void GothicAPI::OnRemovedVob( zCVob* vob, zCWorld* world ) {
+void GothicAPI::OnRemovedVob( zCVob* vob, zCWorld* world, bool tearDownLight ) {
     //LogInfo() << "Removing vob: " << vob;
     GoucWeatherOnVobRemoved( vob );
     Engine::GraphicsEngine->OnVobRemovedFromWorld( vob );
+
+    // GOUC (backport of upstream ffb4f773): a zCVobLight has no visual, so OnAddVob never registers it
+    // and the early-out below skipped every light. A deleted torch or spell light kept its VobLightInfo
+    // in VobLightMap, and DrawPointlightShadows read the freed zCVobLight through it every frame.
+    if ( tearDownLight ) {
+        auto lit = VobLightMap.find( static_cast<zCVobLight*>(vob) );
+        if ( lit != VobLightMap.end() ) {
+            VobLightInfo* li = lit->second;
+            VobLightMap.erase( lit );
+            delete li;
+        }
+    }
 
     auto it = RegisteredVobs.find( vob );
     if ( it == RegisteredVobs.end() ) {
@@ -2139,8 +2151,6 @@ void GothicAPI::OnRemovedVob( zCVob* vob, zCWorld* world ) {
             vlit.second->LightShadowBuffers->OnVobRemovedFromWorld( svi );
     }
 
-    VobLightInfo* li = VobLightMap[static_cast<zCVobLight*>(vob)];
-
     // Erase it from the particle-effect list
     auto pit = std::ranges::find(ParticleEffectVobs, vob );
     if ( pit != ParticleEffectVobs.end() ) {
@@ -2154,15 +2164,10 @@ void GothicAPI::OnRemovedVob( zCVob* vob, zCWorld* world ) {
         DecalVobs.pop_back();
     }
 
-    // Erase it from the list of lights
-    VobLightMap.erase( static_cast<zCVobLight*>(vob) );
-
     // Remove from BSP-Cache
     std::vector<BspInfo*>* nodes = nullptr;
     if ( vi )
         nodes = &vi->ParentBSPNodes;
-    else if ( li )
-        nodes = &li->ParentBSPNodes;
     else if ( svi )
         nodes = &svi->ParentBSPNodes;
 
@@ -2190,24 +2195,6 @@ void GothicAPI::OnRemovedVob( zCVob* vob, zCWorld* world ) {
                     if ( (*bit) == vi ) {
                         (*bit) = node->SmallVobs.back();
                         node->SmallVobs.pop_back();
-                        break;
-                    }
-                }
-            }
-
-            if ( li && nodes ) {
-                for ( auto bit = node->Lights.begin(); bit != node->Lights.end(); ++bit ) {
-                    if ( (*bit)->Vob == static_cast<zCVobLight*>(vob) ) {
-                        (*bit) = node->Lights.back();
-                        node->Lights.pop_back();
-                        break;
-                    }
-                }
-
-                for ( auto bit = node->IndoorLights.begin(); bit != node->IndoorLights.end(); ++bit ) {
-                    if ( (*bit)->Vob == static_cast<zCVobLight*>(vob) ) {
-                        (*bit) = node->IndoorLights.back();
-                        node->IndoorLights.pop_back();
                         break;
                     }
                 }
@@ -2265,9 +2252,6 @@ void GothicAPI::OnRemovedVob( zCVob* vob, zCWorld* world ) {
         delete (*svit).second;
         SkeletalVobMap.erase( svit );
     }
-
-    // delete light info, if valid
-    if ( li ) delete li;
 }
 
 /** Called on a SetVisual-Call of a vob */
@@ -2283,7 +2267,7 @@ void GothicAPI::OnSetVisual( zCVob* vob ) {
             }
         }
         // This one is already there. Re-Add it!
-        OnRemovedVob( vob, vob->GetHomeWorld() );
+        OnRemovedVob( vob, vob->GetHomeWorld(), /*tearDownLight:*/ false );
     }
 
     OnAddVob( vob, vob->GetHomeWorld() );

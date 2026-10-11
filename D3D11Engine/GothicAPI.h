@@ -346,8 +346,9 @@ public:
     /** Called when a VOB got added to the BSP-Tree or the world */
     void OnAddVob( zCVob* vob, zCWorld* world );
 
-    /** Called when a VOB got removed from the world */
-    void OnRemovedVob( zCVob* vob, zCWorld* world );
+    /** Called when a VOB got removed from the world. tearDownLight=false keeps a light's VobLightInfo
+        (temporary hide or visual swap, the same zCVobLight* comes back). */
+    void OnRemovedVob( zCVob* vob, zCWorld* world, bool tearDownLight = true );
 
     /** Called on a SetVisual-Call of a vob */
     void OnSetVisual( zCVob* vob );

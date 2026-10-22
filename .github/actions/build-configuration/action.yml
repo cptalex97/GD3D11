@@ -55,7 +55,7 @@ runs:
       uses: actions/upload-artifact@v6
       with:
         name: ${{ inputs.configuration }}-pdb
-        path: ${{ env.GITHUB_WORKSPACE }}\outputs\*.pdb
+        path: outputs/*.pdb
         if-no-files-found: warn
         retention-days: 2
 

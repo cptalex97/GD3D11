@@ -552,10 +552,6 @@ XRESULT D3D11GraphicsEngine::Init() {
     // and you can't trust Microsoft feature level documentation
     NativeSupport16BitTextures = Toolbox::IsWindowsVersionOrGreater( HIBYTE( _WIN32_WINNT_WIN10 ), LOBYTE( _WIN32_WINNT_WIN10 ), 0 );
     FeatureLevel10Compatibility = (maxFeatureLevel < D3D_FEATURE_LEVEL::D3D_FEATURE_LEVEL_11_0);
-    
-    if ( Engine::GAPI->GetRendererState().RendererSettings.DebugSettings.FeatureSet.ForceFeatureLevel10 ) {
-        FeatureLevel10Compatibility = true;
-    }
     FetchDisplayModeList();
 
     ComPtr<IUnknown> renderdoc = nullptr;
@@ -572,9 +568,7 @@ XRESULT D3D11GraphicsEngine::Init() {
         DrawMultiIndexedInstancedIndirect = Stub_DrawMultiIndexedInstancedIndirect;
     }
 
-    Engine::GAPI->GetRendererState().RendererSettings.DebugSettings.FeatureSet.UseMDI = 
-        !FeatureLevel10Compatibility
-        && DrawMultiIndexedInstancedIndirect != Stub_DrawMultiIndexedInstancedIndirect;
+    Engine::GAPI->GetRendererState().RendererSettings.DebugSettings.FeatureSet.UseMDI = DrawMultiIndexedInstancedIndirect != Stub_DrawMultiIndexedInstancedIndirect;
 
     if ( !BeginUAVOverlap || !EndUAVOverlap ) {
         BeginUAVOverlap = Stub_BeginUAVOverlap;
@@ -979,8 +973,7 @@ XRESULT D3D11GraphicsEngine::RecreateBuffers() {
     OnResetBackBuffer();
 
     // actual native-resolution backbuffer for UI and copy operations !!
-    Backbuffer = std::make_unique<RenderToTextureBuffer>( GetDevice().Get(), Resolution.x, Resolution.y, DXGI_FORMAT_ENGINE_SWAPCHAIN, nullptr, DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_UNKNOWN, 1, 1,
-    D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE | (Device->GetFeatureLevel() >= D3D_FEATURE_LEVEL_11_0 ? D3D11_BIND_UNORDERED_ACCESS : 0) );
+    Backbuffer = std::make_unique<RenderToTextureBuffer>( GetDevice().Get(), Resolution.x, Resolution.y, DXGI_FORMAT_ENGINE_SWAPCHAIN, nullptr, DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_UNKNOWN, 1, 1, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS );
 
     SetDebugName( Backbuffer->GetTexture().Get(), "Backbuffer->TEX" );
     SetDebugName( Backbuffer->GetShaderResView().Get(), "Backbuffer->SRV" );
@@ -1325,6 +1318,19 @@ XRESULT D3D11GraphicsEngine::OnBeginFrame() {
 
     Engine::GAPI->SetFrameProcessedTexturesReady();
     Engine::GAPI->LeaveResourceCriticalSection();
+
+    // Check for shadowmap resize
+    int s = rendererState.RendererSettings.ShadowMapSize;
+
+    if ( ShadowMaps && ShadowMaps->GetSizeX() != s ) {
+        s = std::min<int>(std::max<int>(s, 512), (FeatureLevel10Compatibility ? 8192 : 16384));
+
+        int old = ShadowMaps->GetSizeX();
+        LogInfo() << "Shadowmapresolution changed to: " << s << "x" << s;
+        ShadowMaps->Resize( s );
+
+        rendererState.RendererSettings.ShadowMapSize = s;
+    }
 
     // Notify the shader manager
     ShaderManager->OnFrameStart();

@@ -51,6 +51,14 @@ runs:
 
         "artifact-file-path=$outputDir$outputName.dll" >> $env:GITHUB_OUTPUT
 
+    - name: Upload PDB (bisect)
+      uses: actions/upload-artifact@v6
+      with:
+        name: ${{ inputs.configuration }}-pdb
+        path: ${{ env.GITHUB_WORKSPACE }}\outputs\*.pdb
+        if-no-files-found: warn
+        retention-days: 2
+
     - name: Upload artifacts
       uses: actions/upload-artifact@v6
       with:

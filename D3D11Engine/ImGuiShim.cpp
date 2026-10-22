@@ -159,6 +159,14 @@ void ImGuiShim::RenderLoop()
         // in-game 23:14 at full daylight). Clamped every frame, so it also beats INI edits.
         if ( goucForced.GammaValue < 0.9f ) goucForced.GammaValue = 0.9f; else if ( goucForced.GammaValue > 1.1f ) goucForced.GammaValue = 1.1f;
         if ( goucForced.BrightnessValue < 0.9f ) goucForced.BrightnessValue = 0.9f; else if ( goucForced.BrightnessValue > 1.1f ) goucForced.BrightnessValue = 1.1f;
+        // Object draw distances: floor of 20 m * 1000 for both (same values GD3D11 itself enforces
+        // in GMP mode, GothicAPI.cpp). Turned down to 1 they hide walls, palisades and doors that
+        // are vobs -- players could look through them like a wallhack. Clamped every frame, so it
+        // beats UserSettings.ini, the per-world ZENResources INIs and the F11 sliders. Higher is free.
+        if ( goucForced.OutdoorVobDrawRadius < GOUC_MIN_OUTDOOR_VOB_DRAW_RADIUS )
+            goucForced.OutdoorVobDrawRadius = GOUC_MIN_OUTDOOR_VOB_DRAW_RADIUS;
+        if ( goucForced.OutdoorSmallVobDrawRadius < GOUC_MIN_OUTDOOR_SMALL_VOB_DRAW_RADIUS )
+            goucForced.OutdoorSmallVobDrawRadius = GOUC_MIN_OUTDOOR_SMALL_VOB_DRAW_RADIUS;
     }
 
     ImGui::GetIO().MouseDrawCursor = GetIsActive() && INT2( ImGui::GetMainViewport()->Size.x, ImGui::GetMainViewport()->Size.y ) != Engine::GraphicsEngine->GetResolution();
@@ -812,13 +820,13 @@ void ImGuiShim::RenderSettingsWindow()
 
             ImText( "Object Draw Distance", buttonWidth ); ImGui::SameLine();
             float objectDrawDistance = settings.OutdoorVobDrawRadius / 1000.0f;
-            if ( ImGui::SliderFloat( "##OutdoorVobDrawRadius", &objectDrawDistance, 1.f, 100.0f, "%.0f" ) ) {
+            if ( ImGui::SliderFloat( "##OutdoorVobDrawRadius", &objectDrawDistance, GOUC_MIN_OUTDOOR_VOB_DRAW_RADIUS / 1000.0f, 100.0f, "%.0f", ImGuiSliderFlags_::ImGuiSliderFlags_ClampOnInput ) ) { // GOUC: floor, see RenderLoop
                 settings.OutdoorVobDrawRadius = static_cast<float>(objectDrawDistance * 1000.0f);
             }
 
             float smallObjectDrawDistance = settings.OutdoorSmallVobDrawRadius / 1000.0f;
             ImText( "Small Object Draw Distance", buttonWidth ); ImGui::SameLine();
-            if ( ImGui::SliderFloat( "##OutdoorSmallVobDrawRadius", &smallObjectDrawDistance, 1.f, 100.0f, "%.0f", ImGuiSliderFlags_::ImGuiSliderFlags_ClampOnInput ) ) {
+            if ( ImGui::SliderFloat( "##OutdoorSmallVobDrawRadius", &smallObjectDrawDistance, GOUC_MIN_OUTDOOR_SMALL_VOB_DRAW_RADIUS / 1000.0f, 100.0f, "%.0f", ImGuiSliderFlags_::ImGuiSliderFlags_ClampOnInput ) ) { // GOUC: floor, see RenderLoop
                 settings.OutdoorSmallVobDrawRadius = static_cast<float>(smallObjectDrawDistance * 1000.0f);
             }
 

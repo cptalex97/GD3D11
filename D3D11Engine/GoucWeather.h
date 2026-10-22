@@ -422,6 +422,15 @@ inline constexpr float GOUC_HDR_MIN_LUM_FLOOR = 0.12f;
  *  so it is capped rather than forced -- less is allowed, more is not. */
 inline constexpr float GOUC_HDR_MAX_MIDDLEGRAY = 0.80f;
 
+// ---------------------------------------------------------------------------------------------
+// Object draw distances (not weather, but the same per-frame policy in ImGuiShim::RenderLoop).
+// At the slider minimum of 1 the renderer culls walls, palisades and doors that are vobs, and
+// players could look through them. Floor 20000 for both -- the values GD3D11 itself enforces in
+// GMP mode (GothicAPI.cpp). Defaults are 30000 / 10000, so only the small-object default rises.
+// ---------------------------------------------------------------------------------------------
+inline constexpr float GOUC_MIN_OUTDOOR_VOB_DRAW_RADIUS = 20000.0f;
+inline constexpr float GOUC_MIN_OUTDOOR_SMALL_VOB_DRAW_RADIUS = 20000.0f;
+
 /** Floor for the auto exposure, handed to the HDR shaders (hdr.h). */
 inline float GoucHdrMinLum() {
     return std::max( GOUC_HDR_MIN_LUM_FLOOR, GoucWeatherCur().HdrMin );

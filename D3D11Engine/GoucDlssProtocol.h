@@ -9,6 +9,9 @@
 // share handles + keyed mutexes, duplicates the handles into the helper and only small messages go
 // through the named pipe.
 //
+// License: MIT (see DlssHost/LICENSE), so the GPL renderer and the separately licensed helper can
+// both include it. The helper itself links NVIDIA's DLSS SDK, which must never end up in the GPL part.
+//
 // Keyed-mutex protocol (one key pair per texture):
 //   inputs (colour, depth, motion vectors):  renderer writes under key 0, releases to 1;
 //                                            helper reads under key 1, releases back to 0.

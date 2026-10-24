@@ -1,4 +1,5 @@
 // gouc_dlss_host.exe -- x64 helper that runs NVIDIA DLSS for the 32-bit GD3D11 renderer.
+// License: MIT (LICENSE in this folder), NOT the GPL of GD3D11. Uses the NVIDIA DLSS SDK (NOTICE.txt).
 //
 // Started by the renderer (D3D11Engine/GoucDlss.cpp) with:
 //   gouc_dlss_host.exe --pipe <named pipe> --luid <high>:<low> --log <0|1>

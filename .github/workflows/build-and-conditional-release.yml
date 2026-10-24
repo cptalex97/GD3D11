@@ -75,8 +75,54 @@ jobs:
           project: ${{ matrix.project }}
           output-file: ${{ matrix.output-file }}
 
+  # GOUC: x64 DLSS helper (DlssHost/, MIT) with NVIDIA's DLSS SDK. Lands in GD3D11/Bin/dlss/.
+  build-dlss-host:
+    name: build (DlssHost)
+    runs-on: windows-2025-vs2026
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Checkout NVIDIA DLSS SDK
+        uses: actions/checkout@v6
+        with:
+          repository: NVIDIA/DLSS
+          ref: v310.9.16
+          path: dlss-sdk
+          sparse-checkout: |
+            include
+            lib/Windows_x86_64/x64
+            lib/Windows_x86_64/rel
+            LICENSE.txt
+          sparse-checkout-cone-mode: false
+          filter: blob:none
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build DLSS helper
+        shell: pwsh
+        run: |
+          $out = "$env:GITHUB_WORKSPACE\outputs\dlss\"
+          msbuild DlssHost/DlssHost.vcxproj /p:Configuration=Release /p:Platform=x64 "/p:DlssSdkDir=$env:GITHUB_WORKSPACE\dlss-sdk\" "/p:OutDir=$out"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item dlss-sdk/lib/Windows_x86_64/rel/nvngx_dlss.dll $out
+          Copy-Item dlss-sdk/LICENSE.txt (Join-Path $out 'NVIDIA_RTX_SDK_LICENSE.txt')
+          Copy-Item DlssHost/LICENSE (Join-Path $out 'LICENSE.txt')
+          Copy-Item DlssHost/NOTICE.txt $out
+          Get-ChildItem $out | Format-Table Name, Length
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: DlssHost
+          path: outputs/
+          if-no-files-found: error
+          compression-level: 1
+          retention-days: 2
+
   package-artifacts:
-    needs: build
+    needs: [build, build-dlss-host]
     runs-on: ubuntu-latest
 
     outputs:

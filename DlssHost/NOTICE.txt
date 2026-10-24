@@ -1,0 +1,12 @@
+GOUC DLSS helper (gouc_dlss_host.exe) - third-party notices
+
+This software contains source code provided by NVIDIA Corporation.
+
+The helper is built with the NVIDIA DLSS SDK (https://github.com/NVIDIA/DLSS) and ships
+NVIDIA's nvngx_dlss.dll next to it. Both are proprietary NVIDIA software, used and
+redistributed under the NVIDIA RTX SDKs License (NVIDIA_RTX_SDK_LICENSE.txt in this folder).
+They are not covered by the MIT license of the helper and not by the GPL of GD3D11.
+You may not reverse engineer, decompile or disassemble them.
+
+NVIDIA, NVIDIA RTX, GeForce RTX and NVIDIA DLSS are trademarks and/or registered
+trademarks of NVIDIA Corporation in the U.S. and other countries.

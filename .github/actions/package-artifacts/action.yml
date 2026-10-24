@@ -45,7 +45,8 @@ runs:
         Copy-Item -Path "blobs/libs/*" -Destination "$relDir/" -Recurse -Force
         Copy-Item -Path "blobs/bin/wine-d2d1.dll" -Destination "$relDir/GD3D11/Bin/d2d1.dll" -Force
 
-        Copy-Item -Path "$artifactDir/*" -Destination $binDir -Force
+        # -Recurse: the DlssHost artifact brings its dlss/ subfolder (GOUC DLSS helper + NVIDIA DLL)
+        Copy-Item -Path "$artifactDir/*" -Destination $binDir -Recurse -Force
         Move-Item -Path "$binDir/ddraw.dll" -Destination "$relDir/" -Force
         Move-Item -Path "$binDir/ddraw.pdb" -Destination "$relDir/" -Force
 

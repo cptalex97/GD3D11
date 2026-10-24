@@ -571,8 +571,10 @@ void ImGuiShim::RenderSettingsWindow()
                 ImGui::PopID();
             }
             if ( settings.AntiAliasingMode == GothicRendererSettings::E_AntiAliasingMode::AA_DLSS ) {
-                // GOUC: helper state + test switches for the local DLSS build.
+                // GOUC: helper state + test switches. The NVIDIA line is the attribution the DLSS SDK
+                // license asks for (7.1 b); the launcher credits carry it as well.
                 ImGui::TextWrapped( "%s", GoucDlss::StatusText().c_str() );
+                ImGui::TextDisabled( "Uses NVIDIA DLSS. NVIDIA and DLSS are trademarks of NVIDIA Corporation." );
                 if ( ImGui::TreeNode( "DLSS test switches" ) ) {
                     auto& o = GoucDlss::Options();
                     ImGui::Checkbox( "Invert jitter X", &o.InvertJitterX );

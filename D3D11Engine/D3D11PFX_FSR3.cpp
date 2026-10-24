@@ -209,7 +209,18 @@ XRESULT D3D11PFX_FSR3::Apply(
     dispatchDesc.color = GetAsFfxResource( color, L"FSR3_InputColor" );
     dispatchDesc.depth = GetAsFfxResource( depth, L"FSR3_InputDepth" );
     dispatchDesc.motionVectors = GetAsFfxResource( motionVectors, L"FSR3_InputMotionVectors" );
-    dispatchDesc.output = GetAsFfxResource( output, L"FSR3_OutputColor" );
+    // GOUC: FSR 3 writes its result through a UAV. The LDR back buffer it is asked to fill has no UAV
+    // bind flag since gouc-v18 (typed BGRA8 UAVs are optional on FL11 hardware -> GT 750M black screen),
+    // so FSR 3 wrote nowhere and anti aliasing "FSR 3" showed a black screen for everyone. It now
+    // writes into a pooled RGBA16F texture (typed UAV store is mandatory for that format), which is
+    // copied into the target through its RTV after the dispatch.
+    auto fsrOutput = Renderer->GetTexturePool()->Acquire( {
+        outputSize.x,
+        outputSize.y,
+        DXGI_FORMAT_R16G16B16A16_FLOAT,
+        D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE
+        } );
+    dispatchDesc.output = GetAsFfxResource( fsrOutput->GetTexture().Get(), L"FSR3_OutputColor" );
 
     FfxFsr3UpscalerSharedResourceDescriptions sharedResources;
     ffxFsr3UpscalerGetSharedResourceDescriptions( Context, &sharedResources );
@@ -272,6 +283,14 @@ XRESULT D3D11PFX_FSR3::Apply(
         LogError() << "FSR3: Context dispatch failed.";
         return XR_FAILED;
     }
+
+    // GOUC: hand the result to the real target (see fsrOutput above). Unbind the compute UAVs first,
+    // otherwise D3D11 drops the SRV binding of a texture that is still bound as UAV.
+    ID3D11UnorderedAccessView* nullUAVs[8] = {};
+    context->CSSetUnorderedAccessViews( 0, std::size( nullUAVs ), nullUAVs, nullptr );
+    Microsoft::WRL::ComPtr<ID3D11RenderTargetView> target( output );
+    Renderer->CopyTextureToRTV( fsrOutput->GetShaderResView(), target, outputSize );
+    context->PSSetShaderResources( 0, 1, nullSRVs );
 
     return XR_SUCCESS;
 }

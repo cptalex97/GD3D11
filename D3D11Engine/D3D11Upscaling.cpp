@@ -6,6 +6,7 @@
 #include "D3D11PFX_FSR1.h"
 #include "D3D11PFX_FSR3.h"
 #include "D3D11PFX_TAA.h"
+#include "GoucDlss.h"
 #include "oCGame.h"
 
 namespace {
@@ -37,7 +38,7 @@ namespace {
 
     }
 
-    void AddFSR3Pass( RenderGraph& graph,
+    void RunFSR3( const RenderGraph& graph,
         D3D11GraphicsEngine& engine,
         ID3D11RenderTargetView* outputRTV,
         RGResourceHandle backBufferHandle,
@@ -45,14 +46,6 @@ namespace {
         RGResourceHandle velocityBufferHandle,
         RGResourceHandle reactiveMaskResource )
     {
-        graph.AddPass( RG_PASS_NAME("FSR 3"), [&]( RGBuilder& builder, RenderPass& pass ) {
-            builder.Read( velocityBufferHandle );
-            builder.Read( reactiveMaskResource );
-            builder.Read( backBufferHandle );
-
-            builder.Write( backBufferHandle );
-
-            pass.m_executeCallback = [&engine, backBufferHandle, outputRTV, velocityBufferHandle, reactiveMaskResource, depth]( const RenderGraph& graph ) {
                 auto& settings = Engine::GAPI->GetRendererState().RendererSettings;
 
                 auto backbufferTex = graph.GetPhysicalTexture( backBufferHandle );
@@ -100,6 +93,79 @@ namespace {
                     farZ,
                     sharpenFactor >= 0.001f,
                     sharpenFactor /* FSR3 has 0..1 (sharp)*/ );
+    }
+
+    void AddFSR3Pass( RenderGraph& graph,
+        D3D11GraphicsEngine& engine,
+        ID3D11RenderTargetView* outputRTV,
+        RGResourceHandle backBufferHandle,
+        ID3D11ShaderResourceView* depth,
+        RGResourceHandle velocityBufferHandle,
+        RGResourceHandle reactiveMaskResource )
+    {
+        graph.AddPass( RG_PASS_NAME("FSR 3"), [&]( RGBuilder& builder, RenderPass& pass ) {
+            builder.Read( velocityBufferHandle );
+            builder.Read( reactiveMaskResource );
+            builder.Read( backBufferHandle );
+
+            builder.Write( backBufferHandle );
+
+            pass.m_executeCallback = [&engine, backBufferHandle, outputRTV, velocityBufferHandle, reactiveMaskResource, depth]( const RenderGraph& graph ) {
+                RunFSR3( graph, engine, outputRTV, backBufferHandle, depth, velocityBufferHandle, reactiveMaskResource );
+                };
+        } );
+    }
+
+    // GOUC: DLSS through the x64 helper (GoucDlss.h). Same inputs as FSR 3; whenever DLSS cannot
+    // deliver this frame (helper starting, not available, failed) the frame goes through FSR 3.
+    void AddDLSSPass( RenderGraph& graph,
+        D3D11GraphicsEngine& engine,
+        ID3D11RenderTargetView* outputRTV,
+        RGResourceHandle backBufferHandle,
+        ID3D11ShaderResourceView* depth,
+        RGResourceHandle velocityBufferHandle,
+        RGResourceHandle reactiveMaskResource )
+    {
+        graph.AddPass( RG_PASS_NAME("DLSS"), [&]( RGBuilder& builder, RenderPass& pass ) {
+            builder.Read( velocityBufferHandle );
+            builder.Read( reactiveMaskResource );
+            builder.Read( backBufferHandle );
+
+            builder.Write( backBufferHandle );
+
+            pass.m_executeCallback = [&engine, backBufferHandle, outputRTV, velocityBufferHandle, reactiveMaskResource, depth]( const RenderGraph& graph ) {
+                auto& settings = Engine::GAPI->GetRendererState().RendererSettings;
+                auto backbufferTex = graph.GetPhysicalTexture( backBufferHandle );
+                auto velocityBufferTex = graph.GetPhysicalTexture( velocityBufferHandle );
+
+                Microsoft::WRL::ComPtr<ID3D11Resource> depthRes;
+                Microsoft::WRL::ComPtr<ID3D11Texture2D> depthTex;
+                if ( depth ) {
+                    depth->GetResource( depthRes.GetAddressOf() );
+                    depthRes.As( &depthTex );
+                }
+
+                const auto inputSize = engine.GetResolution();
+                const auto outputSize = engine.GetBackbufferResolution();
+                const auto jitter = engine.GetPfxRenderer()->GetTAAEffect()->GetJitterOffsetUnscaled();
+
+                GoucDlss::FrameInputs in;
+                in.Color = backbufferTex ? backbufferTex->GetTexture().Get() : nullptr;
+                in.Depth = depthTex.Get();
+                in.Motion = velocityBufferTex ? velocityBufferTex->GetTexture().Get() : nullptr;
+                in.Output = outputRTV;
+                in.RenderWidth = inputSize.x;
+                in.RenderHeight = inputSize.y;
+                in.OutputWidth = outputSize.x;
+                in.OutputHeight = outputSize.y;
+                in.JitterX = jitter.x;
+                in.JitterY = jitter.y;
+                in.FrameTimeMs = Engine::GAPI->GetDeltaTime() * 1000.f;
+                in.ResolutionScalePercent = settings.ResolutionScalePercent;
+
+                if ( !GoucDlss::Evaluate( engine, in ) ) {
+                    RunFSR3( graph, engine, outputRTV, backBufferHandle, depth, velocityBufferHandle, reactiveMaskResource );
+                }
                 };
         } );
     }
@@ -109,6 +175,11 @@ void D3D11Upscaling::UpdateUpscaling( D3D11GraphicsEngine& engine )
 {
     if ( engine.GetDevice()->GetFeatureLevel() < D3D_FEATURE_LEVEL_11_0 ) {
         return;
+    }
+
+    // GOUC: DLSS deselected -> stop the helper and free its shared textures.
+    if ( Engine::GAPI->GetRendererState().RendererSettings.AntiAliasingMode != GothicRendererSettings::AA_DLSS ) {
+        GoucDlss::Stop();
     }
 
     const bool needsJitteredProj = Engine::GAPI->GetRendererState().RendererSettings.GetIsTAAEnabled();
@@ -145,6 +216,14 @@ bool D3D11Upscaling::AddUpscalingPass( RenderGraph& graph,
             && settings.AntiAliasingMode == GothicRendererSettings::AA_FSR ) {
 
         AddFSR3Pass( graph, engine, outputRTV, color, depth, motionVectors, reactiveMask );
+        return true;
+    }
+
+    if ( settings.Upscaler == GothicRendererSettings::E_Upscaler::UPSCALER_DLSS
+            && (settings.ResolutionScalePercent <= 100)
+            && settings.AntiAliasingMode == GothicRendererSettings::AA_DLSS ) {
+
+        AddDLSSPass( graph, engine, outputRTV, color, depth, motionVectors, reactiveMask );
         return true;
     }
     return false;

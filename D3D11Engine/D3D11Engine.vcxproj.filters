@@ -827,6 +827,12 @@
     <ClInclude Include="D3D11Upscaling.h">
       <Filter>Engine\D3D11</Filter>
     </ClInclude>
+    <ClInclude Include="GoucDlss.h">
+      <Filter>Engine\D3D11</Filter>
+    </ClInclude>
+    <ClInclude Include="GoucDlssProtocol.h">
+      <Filter>Engine\D3D11</Filter>
+    </ClInclude>
     <ClInclude Include="D3D11PFX_SAO.h" />
     <ClInclude Include="D3D11PFX_ASSAO.h">
       <Filter>Engine\D3D11\PFX\Effects</Filter>
@@ -1132,6 +1138,9 @@
       <Filter>ZenGin\Classes</Filter>
     </ClCompile>
     <ClCompile Include="D3D11Upscaling.cpp">
+      <Filter>Engine\D3D11</Filter>
+    </ClCompile>
+    <ClCompile Include="GoucDlss.cpp">
       <Filter>Engine\D3D11</Filter>
     </ClCompile>
     <ClCompile Include="D3D11PFX_SAO.cpp" />

@@ -4,6 +4,7 @@
 #include <ShellScalingApi.h>
 
 #include "ImGuiEditorView.h"
+#include "GoucDlss.h"
 #include "zCParser.h"
 #include <sstream>
 #include <map>
@@ -461,6 +462,15 @@ namespace
             // switch to regular TAA if upsampled
             s.AntiAliasingMode = GothicRendererSettings::AA_TAA;
         }
+        // GOUC: DLSS is AA and upscaler in one, like FSR 3.
+        if (s.AntiAliasingMode == GothicRendererSettings::E_AntiAliasingMode::AA_DLSS) {
+            s.Upscaler = GothicRendererSettings::E_Upscaler::UPSCALER_DLSS;
+            if (s.ResolutionScalePercent > 100) {
+                s.ResolutionScalePercent = 100;
+            }
+        } else if (s.Upscaler == GothicRendererSettings::E_Upscaler::UPSCALER_DLSS) {
+            s.Upscaler = GothicRendererSettings::E_Upscaler::UPSCALER_FSR_1;
+        }
     }
 }
 
@@ -541,6 +551,7 @@ void ImGuiShim::RenderSettingsWindow()
                 {"SMAA", GothicRendererSettings::E_AntiAliasingMode::AA_SMAA, nullptr },
                 {"TAA", GothicRendererSettings::E_AntiAliasingMode::AA_TAA, "Temporal Anti-Aliasing" },
                 {"FSR 3", GothicRendererSettings::E_AntiAliasingMode::AA_FSR, "FidelityFX Super Resolution 3"},
+                {"DLSS", GothicRendererSettings::E_AntiAliasingMode::AA_DLSS, "NVIDIA DLSS / DLAA (RTX only, falls back to FSR 3)"},
 
             };
             {
@@ -550,11 +561,32 @@ void ImGuiShim::RenderSettingsWindow()
                     if ( selectedMode == GothicRendererSettings::E_AntiAliasingMode::AA_FSR ) {
                         settings.Upscaler = GothicRendererSettings::E_Upscaler::UPSCALER_FSR_3;
                     }
+                    if ( selectedMode == GothicRendererSettings::E_AntiAliasingMode::AA_DLSS ) {
+                        settings.Upscaler = GothicRendererSettings::E_Upscaler::UPSCALER_DLSS;
+                    }
                     settings.AntiAliasingMode = selectedMode;
                     } ) ) {
                     ImGui::EndCombo();
                 }
                 ImGui::PopID();
+            }
+            if ( settings.AntiAliasingMode == GothicRendererSettings::E_AntiAliasingMode::AA_DLSS ) {
+                // GOUC: helper state + test switches for the local DLSS build.
+                ImGui::TextWrapped( "%s", GoucDlss::StatusText().c_str() );
+                if ( ImGui::TreeNode( "DLSS test switches" ) ) {
+                    auto& o = GoucDlss::Options();
+                    ImGui::Checkbox( "Invert jitter X", &o.InvertJitterX );
+                    ImGui::Checkbox( "Invert jitter Y", &o.InvertJitterY );
+                    ImGui::Checkbox( "Invert motion X", &o.InvertMotionX );
+                    ImGui::Checkbox( "Invert motion Y", &o.InvertMotionY );
+                    static std::vector<std::pair<const char*, int>> presets = {
+                        { "Default", 0 }, { "J", 10 }, { "K", 11 }, { "L", 12 }, { "M", 13 },
+                    };
+                    if ( ImComboBox( "Preset##DlssPreset", presets, &o.Preset ) ) {
+                        ImGui::EndCombo();
+                    }
+                    ImGui::TreePop();
+                }
             }
 
             ImGui::Checkbox( "HDR", &settings.EnableHDR );
@@ -682,6 +714,23 @@ void ImGuiShim::RenderSettingsWindow()
                     CurrentResolution.x * settings.ResolutionScalePercent / 100,
                     CurrentResolution.y * settings.ResolutionScalePercent / 100
                 );
+            } else if ( settings.Upscaler == GothicRendererSettings::UPSCALER_DLSS ) {
+                // GOUC: DLSS quality modes (GoucDlss maps the percentage back to the NGX mode).
+                settings.ResolutionScalePercent = std::clamp( settings.ResolutionScalePercent, 33, 100 );
+                static std::vector<std::pair<const char*, int>> dlssLevels = {
+                    { "DLAA", 100 },
+                    { "Quality", 67 },
+                    { "Balanced", 58 },
+                    { "Performance", 50 },
+                    { "Ultra Performance", 33 },
+                };
+                if (ImComboBox( "##ResolutionScalePercent", dlssLevels, &settings.ResolutionScalePercent ) ) {
+                    ImGui::EndCombo();
+                }
+                ImGui::SetItemTooltip("Effective resolution: %d x %d",
+                    CurrentResolution.x * settings.ResolutionScalePercent / 100,
+                    CurrentResolution.y * settings.ResolutionScalePercent / 100
+                );
             } else {
                 static float previousResolutionScale = static_cast<float>(settings.ResolutionScalePercent);
                 if ( ImGui::SliderFloat( "##ResolutionScalePercent", &previousResolutionScale, 25.0f, 200.0f, "%.0f%%" ) ) {
@@ -699,6 +748,7 @@ void ImGuiShim::RenderSettingsWindow()
                 { "Simple", GothicRendererSettings::E_Upscaler::UPSCALER_DEFAULT },
                 { "FSR 1", GothicRendererSettings::E_Upscaler::UPSCALER_FSR_1 },
                 { "FSR 3", GothicRendererSettings::E_Upscaler::UPSCALER_FSR_3 },
+                { "DLSS", GothicRendererSettings::E_Upscaler::UPSCALER_DLSS },
             };
             if ( ImComboBox( "##Upscaler", upscalers, &settings.Upscaler ) ) {
                 ImGui::EndCombo();
@@ -1496,11 +1546,15 @@ void RenderAdvancedColumn4( GothicRendererSettings& settings, GothicAPI* gapi ) 
                 {"SMAA", GothicRendererSettings::E_AntiAliasingMode::AA_SMAA},
                 {"TAA", GothicRendererSettings::E_AntiAliasingMode::AA_TAA},
                 {"FSR 3", GothicRendererSettings::E_AntiAliasingMode::AA_FSR},
+                {"DLSS", GothicRendererSettings::E_AntiAliasingMode::AA_DLSS},
             };
             auto selectedMode = settings.AntiAliasingMode;
             if ( ImComboBoxC( "Anti Aliasing", antiAliasing, &selectedMode, [&selectedMode, &settings] {
                 if ( selectedMode == GothicRendererSettings::E_AntiAliasingMode::AA_FSR ) {
                     settings.Upscaler = GothicRendererSettings::E_Upscaler::UPSCALER_FSR_3;
+                }
+                if ( selectedMode == GothicRendererSettings::E_AntiAliasingMode::AA_DLSS ) {
+                    settings.Upscaler = GothicRendererSettings::E_Upscaler::UPSCALER_DLSS;
                 }
                 settings.AntiAliasingMode = selectedMode;
                 } ) ) {

@@ -572,6 +572,7 @@ struct GothicRendererSettings {
         AA_SMAA = 1,
         AA_TAA = 2,
         AA_FSR = 3,
+        AA_DLSS = 4, // GOUC: NVIDIA DLSS through the x64 helper (GoucDlss.h), falls back to FSR 3
         _AA_NUM_MODES
     };
 
@@ -597,6 +598,7 @@ struct GothicRendererSettings {
         UPSCALER_FSR_1 = 1,
         // UPSCALER_FSR_2 = 2, // removed
         UPSCALER_FSR_3 = 3,
+        UPSCALER_DLSS = 4, // GOUC
         _UPSCALER_NUM_MODES
     };
 
@@ -1086,7 +1088,8 @@ struct GothicRendererSettings {
 
     bool GetIsTAAEnabled() const {
         return AntiAliasingMode == E_AntiAliasingMode::AA_TAA
-            || AntiAliasingMode == E_AntiAliasingMode::AA_FSR;
+            || AntiAliasingMode == E_AntiAliasingMode::AA_FSR
+            || AntiAliasingMode == E_AntiAliasingMode::AA_DLSS;
     }
 };
 

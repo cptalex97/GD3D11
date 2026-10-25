@@ -777,6 +777,10 @@ public:
     /** Returns the current weight of the rain-fx. The bigger value of ours and gothics is returned. */
     float GetRainFXWeight();
 
+    /** GOUC: weight for the rain DROPS only -- Gothic's rain or the drizzle bursts
+     *  (GoucDrizzleWeight), whichever is higher. Everything else keeps GetRainFXWeight. */
+    float GetRainParticleWeight();
+
     /** Returns the wetness of the scene. Lasts longer than RainFXWeight */
     float GetSceneWetness();
 

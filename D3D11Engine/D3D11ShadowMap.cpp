@@ -1170,7 +1170,7 @@ XRESULT D3D11ShadowMap::DrawWorldShadow( )
 
 XRESULT D3D11ShadowMap::DrawRainShadowmap() {
     // Draw rainmap, if raining
-    if ( Engine::GAPI->GetRainFXWeight() > 0.00001f ) {
+    if ( Engine::GAPI->GetRainParticleWeight() > 0.00001f ) { // GOUC: drizzle needs the roof map too
         auto graphicsEngine = reinterpret_cast<D3D11GraphicsEngine*>(Engine::GraphicsEngine);
         auto _ = graphicsEngine->RecordGraphicsEvent( GE_NAME( "DrawRainShadowmap" ) );
         ZoneScopedN( "DrawRainShadowmap" );

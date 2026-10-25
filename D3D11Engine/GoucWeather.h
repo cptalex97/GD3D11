@@ -52,6 +52,8 @@ struct GoucWeatherParams {
     float Temp = 0.0f;      // TEMP     colour temperature of the scene, -1 cool .. +1 warm
     float Sat = 1.0f;       // SAT      saturation of the scene
     float Contrast = 1.0f;  // CON      contrast of the scene
+    float Drizzle = 0.0f;   // DRIZZLE  peak drop weight WITHOUT Gothic rain (no rain sound), 0 = off
+    float DrizzleOn = 0.0f; // DRIZZLEON share of drizzle periods that carry drops (0..1)
 };
 
 struct GoucWeatherField {
@@ -86,6 +88,8 @@ inline const GoucWeatherField GOUC_WEATHER_FIELDS[] = {
     { "TEMP",     &GoucWeatherParams::Temp,    -1.00f,   1.00f },
     { "SAT",      &GoucWeatherParams::Sat,      0.85f,   1.10f },
     { "CON",      &GoucWeatherParams::Contrast, 0.95f,   1.05f },
+    { "DRIZZLE",  &GoucWeatherParams::Drizzle,  0.00f,   0.50f },
+    { "DRIZZLEON",&GoucWeatherParams::DrizzleOn,0.00f,   1.00f },
 };
 
 // Without a control vob for this long, the look fades back to neutral and the renderer rolls its
@@ -277,6 +281,36 @@ inline void GoucWeatherUpdate() {
         const float b = s.Target.*(field.Member);
         s.Current.*(field.Member) = a + (b - a) * t;
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Drizzle (cpt_alex 25.10.2026). Gothic couples rain drops and the rain sound: once the engine
+// rains, the full rain loop plays. Drizzle therefore runs WITHOUT Gothic rain (the server keeps
+// the rain window closed) and the renderer draws a few drops on its own: DRIZZLE is the peak
+// weight of the drop shader (it discards by weight cubed, so 0.3 shows about 3 % of the drops),
+// DRIZZLEON the share of 20 s periods that carry a burst at all. Each burst swells and fades
+// over its period. The bursts are rolled per client from the clock -- drizzle need not match
+// between players. Only the drops use this (GothicAPI::GetRainParticleWeight); wetness, rain
+// fog, light and wind still follow Gothic's rain alone, the look handles drizzle there.
+inline constexpr DWORD GOUC_DRIZZLE_PERIOD_MS = 20000;
+
+inline float GoucDrizzleWeight() {
+    const auto& c = GoucWeather().Current;
+    if ( c.Drizzle <= 0.001f || c.DrizzleOn <= 0.001f ) {
+        return 0.0f;
+    }
+    const DWORD now = Toolbox::timeSinceStartMs();
+    // cheap integer hash of the period index -> 0..1
+    DWORD h = (now / GOUC_DRIZZLE_PERIOD_MS) * 2654435761u;
+    h ^= h >> 15;
+    h *= 2246822519u;
+    h ^= h >> 13;
+    const float roll = static_cast<float>(h & 0xFFFF) / 65535.0f;
+    if ( roll >= c.DrizzleOn ) {
+        return 0.0f;
+    }
+    const float frac = static_cast<float>(now % GOUC_DRIZZLE_PERIOD_MS) / static_cast<float>(GOUC_DRIZZLE_PERIOD_MS);
+    return c.Drizzle * std::sin( frac * 3.14159265f );
 }
 
 // ---------------------------------------------------------------------------------------------

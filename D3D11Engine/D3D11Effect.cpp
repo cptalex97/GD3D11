@@ -247,7 +247,7 @@ XRESULT D3D11Effect::DrawRain() {
     // Setup constantbuffers
     ParticleGSInfoConstantBuffer gcb = {};
     gcb.CameraPosition = Engine::GAPI->GetCameraPosition();
-    gcb.PGS_RainFxWeight = Engine::GAPI->GetRainFXWeight();
+    gcb.PGS_RainFxWeight = Engine::GAPI->GetRainParticleWeight(); // GOUC: drizzle drops
     gcb.PGS_RainHeight = state.RendererSettings.RainHeightRange;
     gcb.PGS_RainScale = isSnow ? snowScale : rainScale;
 
@@ -408,7 +408,7 @@ XRESULT D3D11Effect::DrawRain_CS() {
     // Setup constantbuffers
     ParticleGSInfoConstantBuffer gcb = {};
     gcb.CameraPosition = Engine::GAPI->GetCameraPosition();
-    gcb.PGS_RainFxWeight = Engine::GAPI->GetRainFXWeight();
+    gcb.PGS_RainFxWeight = Engine::GAPI->GetRainParticleWeight(); // GOUC: drizzle drops
     gcb.PGS_RainHeight = state.RendererSettings.RainHeightRange;
     gcb.PGS_RainScale = isSnow ? snowScale : rainScale;
 

@@ -6301,6 +6301,11 @@ float GothicAPI::GetRainFXWeight() {
     return std::max( myRainFxWeight, gRainFxWeight );
 }
 
+/** GOUC: drops of Gothic's rain or of the drizzle bursts (GoucWeather.h), no rain sound for the latter */
+float GothicAPI::GetRainParticleWeight() {
+    return std::max( GetRainFXWeight(), GoucDrizzleWeight() );
+}
+
 /** Returns the wetness of the scene. Lasts longer than RainFXWeight */
 float GothicAPI::GetSceneWetness() {
     float rain = GetRainFXWeight();

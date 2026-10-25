@@ -4180,7 +4180,7 @@ XRESULT D3D11GraphicsEngine::OnStartWorldRendering() {
         });
     }
     
-    if (Engine::GAPI->GetRainFXWeight() > 0.0f) {
+    if (Engine::GAPI->GetRainParticleWeight() > 0.0f) { // GOUC: also drizzle drops
         if ( FeatureLevel10Compatibility || Engine::GAPI->GetRendererState().RendererSettings.DrawRainThroughTransformFeedback ) {
             graph.AddPass( RG_PASS_NAME("Draw Rain"), [&]( RGBuilder& builder, RenderPass& pass ) {
                 builder.Read( backBufferHandle );
